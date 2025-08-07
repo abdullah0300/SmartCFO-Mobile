@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "SmartCFO-Mobile",
-    "slug": "SmartCFO-Mobile",
+    "slug": "smart-cfo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -34,8 +34,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "56dd18b0-a816-4865-8919-7e90731f4717"
+        "projectId": "57032019-bb93-4239-a15e-7a7508d1c160"
       }
-    }
+    },
+    "owner": "abdullah724"
   }
 }

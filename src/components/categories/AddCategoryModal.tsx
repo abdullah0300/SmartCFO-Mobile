@@ -14,7 +14,7 @@ import * as Haptics from 'expo-haptics';
 
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../services/api';
-import { Colors, Spacing, Typography, BorderRadius } from '../../constants/Colors';
+import { Colors, Spacing, Typography, BorderRadius } from '../../constants/Colors'; 
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 

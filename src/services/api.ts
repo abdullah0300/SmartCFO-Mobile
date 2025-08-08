@@ -767,3 +767,38 @@ export const getDashboardDataForPeriod = async (
     }
   };
 };
+
+
+// Get single income record
+export const getIncome = async (incomeId: string, userId: string) => {
+  const { data, error } = await supabase
+    .from('income')
+    .select(`
+      *,
+      category:categories(*),
+      client:clients(*)
+    `)
+    .eq('id', incomeId)
+    .eq('user_id', userId)
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
+// Get single expense record
+export const getExpense = async (expenseId: string, userId: string) => {
+  const { data, error } = await supabase
+    .from('expenses')
+    .select(`
+      *,
+      category:categories(*),
+      vendor:vendors(*)
+    `)
+    .eq('id', expenseId)
+    .eq('user_id', userId)
+    .single();
+
+  if (error) throw error;
+  return data;
+};

@@ -1,5 +1,5 @@
 // App.tsx
-import React from 'react';
+import React, { useState } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -8,7 +8,7 @@ import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-
+import SplashScreen from './src/screens/SplashScreen';
 // Auth Screens
 import LoginScreen from './app/(auth)/login';
 
@@ -19,6 +19,7 @@ import ExpensesScreen from './app/(tabs)/expenses';
 import ProfileScreen from './app/(tabs)/profile';
 import NotificationsScreen from './app/(tabs)/notifications';
 import InvoicesScreen from './app/(tabs)/invoices';
+import TransactionDetailScreen from './src/screens/TransactionDetailScreen';
 
 // Stack Screens (Invoice related)
 import InvoiceViewScreen from './src/screens/InvoiceViewScreen';
@@ -49,6 +50,8 @@ export type RootStackParamList = {
   Clients: undefined;
   Categories: undefined;
   Vendors: undefined;
+   TransactionDetail: { transactionId: string; type: 'income' | 'expense' };
+  EditTransaction: { transactionId: string; type: 'income' | 'expense' };
 };
 
 export type TabParamList = {
@@ -70,6 +73,7 @@ const PlaceholderScreen = () => (
     <ActivityIndicator size="large" color={Colors.light.primary} />
   </View>
 );
+
 
 function TabNavigator() {
   return (
@@ -159,6 +163,14 @@ function AuthNavigator() {
               presentation: 'card' 
             }}
           />
+          <Stack.Screen 
+  name="TransactionDetail" 
+  component={TransactionDetailScreen}
+  options={{ 
+    animation: 'slide_from_right',
+    presentation: 'card' 
+  }}
+/>
         </>
       ) : (
         <Stack.Screen name="Login" component={LoginScreen} />
@@ -166,8 +178,17 @@ function AuthNavigator() {
     </Stack.Navigator>
   );
 }
-
 export default function App() {
+  const [showSplash, setShowSplash] = useState(true);
+
+  const handleSplashComplete = () => {
+    setShowSplash(false);
+  };
+
+  if (showSplash) {
+    return <SplashScreen onAnimationComplete={handleSplashComplete} />;
+  }
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>

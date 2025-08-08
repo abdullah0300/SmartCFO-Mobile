@@ -27,7 +27,8 @@ import { Colors, Spacing, Typography, BorderRadius } from '../../src/constants/C
 import { format } from 'date-fns';
 import * as Haptics from 'expo-haptics';
 import { AIInsightsModal } from '../../src/components/dashboard/AIInsightsModal';
-
+import { CompositeNavigationProp } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 const { width } = Dimensions.get('window');
 
 // Navigation types
@@ -40,7 +41,19 @@ type TabParamList = {
   Notifications: undefined;
 };
 
-type DashboardNavigationProp = BottomTabNavigationProp<TabParamList, 'Dashboard'>;
+type RootStackParamList = {
+  Main: undefined;
+  TransactionDetail: { transactionId: string; type: 'income' | 'expense' };
+  Income: undefined;
+  Expenses: undefined;
+  Notifications: undefined;
+  Profile: undefined;
+};
+
+type DashboardNavigationProp = CompositeNavigationProp<    // <-- THIS < IS WHAT'S MISSING
+  BottomTabNavigationProp<TabParamList, 'Dashboard'>,
+  NativeStackNavigationProp<RootStackParamList>
+>;
 
 // Dynamic Greeting Component
 const DynamicGreeting = ({ userName }: { userName: string }) => {
@@ -67,14 +80,33 @@ const DynamicGreeting = ({ userName }: { userName: string }) => {
 };
 
 // Recent Transaction Component
-const RecentTransaction = ({ item, type }: { item: any; type: 'income' | 'expense' }) => {
+const RecentTransaction = ({ 
+  item, 
+  type,
+  navigation
+}: { 
+  item: any; 
+  type: 'income' | 'expense';
+  navigation: any;
+}) => {
   const { formatCurrency } = useSettings();
   const isIncome = type === 'income';
   // Calculate total with tax
   const displayAmount = item.amount + (item.tax_amount || 0);
   
-  return (
-    <TouchableOpacity style={styles.transactionItem} activeOpacity={0.7}>
+  const handlePress = () => {
+  navigation.navigate('TransactionDetail', { 
+    transactionId: item.id, 
+    type: type 
+  });
+};
+
+return (
+  <TouchableOpacity 
+    style={styles.transactionItem} 
+    activeOpacity={0.7}
+    onPress={handlePress}
+  >
       <View style={styles.transactionLeft}>
         <View style={[
           styles.transactionIcon,
@@ -263,7 +295,7 @@ const handleOpenInsights = async () => {
               {notificationCount > 0 && (
                 <View style={styles.notificationBadge}>
                   <Text style={styles.notificationBadgeText}>
-                    {notificationCount > 9 ? '9+' : notificationCount}
+                    {notificationCount > 9 ? '9+' : notificationCount.toString()}
                   </Text>
                 </View>
               )}
@@ -404,32 +436,43 @@ const handleOpenInsights = async () => {
           </View>
         </View>
 
-        {/* Recent Transactions */}
-        <View style={styles.recentSection}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Transactions</Text>
-           
-          </View>
-          
-          <View style={styles.transactionsList}>
-            {recentTransactions.length > 0 ? (
-              recentTransactions.map((item) => (
-                <RecentTransaction 
-                  key={item.id} 
-                  item={item} 
-                  type={item.type as 'income' | 'expense'} 
-                />
-              ))
-            ) : (
-              <View style={styles.emptyTransactions}>
-                <Text style={styles.emptyText}>No transactions yet</Text>
-                <Text style={styles.emptySubtext}>
-                  Add your first income or expense to get started
-                </Text>
-              </View>
-            )}
-          </View>
-        </View>
+
+{/* Recent Transactions */}
+<View style={styles.recentSection}>
+  <View style={styles.sectionHeader}>
+    <Text style={styles.sectionTitle}>Recent Transactions</Text>
+    <TouchableOpacity
+  onPress={() => {
+    if (recentTransactions.length > 0) {
+      const firstTransaction = recentTransactions[0];
+      navigation.navigate(firstTransaction.type === 'income' ? 'Income' : 'Expenses');
+    }
+  }}
+>
+  {/* <Text style={styles.seeAllText}>See all</Text> */}
+</TouchableOpacity>
+  </View>
+  
+  <View style={styles.transactionsList}>
+    {recentTransactions.length > 0 ? (
+      recentTransactions.map((item) => (
+        <RecentTransaction 
+          key={item.id} 
+          item={item} 
+          type={item.type as 'income' | 'expense'} 
+          navigation={navigation}
+        />
+      ))
+    ) : (
+      <View style={styles.emptyTransactions}>
+        <Text style={styles.emptyText}>No transactions yet</Text>
+        <Text style={styles.emptySubtext}>
+          Add your first income or expense to get started
+        </Text>
+      </View>
+    )}
+  </View>
+</View>
         
         {/* Bottom padding */}
         <View style={{ height: 100 }} />

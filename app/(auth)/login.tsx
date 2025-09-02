@@ -1,5 +1,6 @@
 // app/(auth)/login.tsx
 import React, { useState, useEffect } from 'react';
+import { Image } from 'react-native';
 import {
   View,
   Text,
@@ -208,12 +209,11 @@ export default function LoginScreen() {
             {/* Logo and Title */}
             <View style={styles.headerSection}>
               <View style={styles.logoContainer}>
-                <LinearGradient
-                  colors={['rgba(255,255,255,0.9)', 'rgba(255,255,255,0.8)']}
-                  style={styles.logoBackground}
-                >
-                  <Text style={styles.logoText}>SC</Text>
-                </LinearGradient>
+                <Image 
+                  source={require('../../assets/icon.png')}   // local image
+                  style={{ width: 80, height: 80, borderRadius: 20 }} 
+                  resizeMode="contain"
+                />
               </View>
               <Text style={styles.welcomeText}>Welcome back</Text>
               <Text style={styles.subtitleText}>Sign in to manage your finances</Text>

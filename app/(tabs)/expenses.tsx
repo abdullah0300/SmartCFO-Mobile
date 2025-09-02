@@ -34,30 +34,30 @@ const ExpenseItem = ({
   item: Expense; 
   onPress: (expense: Expense) => void;
 }) => {
-  const { formatCurrency } = useSettings();
-  // Calculate total amount including tax
-  const displayAmount = item.amount + (item.tax_amount || 0);
+  const { formatCurrency, getCurrencySymbol, baseCurrency } = useSettings();
+  const displayAmount = item.amount; // Show amount WITHOUT tax like income list
+  const isBaseCurrency = !item.currency || item.currency === baseCurrency;
   
-  // Helper function to get vendor name safely
-  const getVendorName = (): string | null => {
-    if (!item.vendor) return null;
-    
-    // If vendor is a string (old data)
-    if (typeof item.vendor === 'string') {
-      return item.vendor;
-    }
-    
-    // If vendor is an object with name property (new data from API)
+  // Build meta text parts
+  const metaParts = [];
+  
+  // Safely get vendor name
+  const getVendorName = (): string => {
+    if (!item.vendor) return '';
+    if (typeof item.vendor === 'string') return item.vendor;
     if (typeof item.vendor === 'object' && item.vendor !== null && 'name' in item.vendor) {
-      // Type assertion to tell TypeScript this is a Vendor object
       const vendorObj = item.vendor as Vendor;
-      return vendorObj.name || null;
+      return vendorObj.name || '';
     }
-    
-    return null;
+    return '';
   };
   
   const vendorName = getVendorName();
+  if (vendorName) {
+    metaParts.push(vendorName);
+  }
+  metaParts.push(format(new Date(item.date), 'MMM d'));
+  const metaText = metaParts.join(' • ');
   
   return (
     <TouchableOpacity 
@@ -76,39 +76,34 @@ const ExpenseItem = ({
           ]} />
           <View style={styles.itemDetails}>
             <Text style={styles.itemDescription} numberOfLines={1}>
-              {item.description}
+              {String(item.description)}
             </Text>
             <View style={styles.itemMeta}>
               <View style={[styles.categoryBadge, { backgroundColor: (item.category?.color || '#EF4444') + '15' }]}>
                 <Text style={[styles.itemCategory, { color: item.category?.color || '#EF4444' }]}>
-                  {item.category?.name || 'Uncategorized'}
+                  {String(item.category?.name || 'Uncategorized')}
                 </Text>
               </View>
-              {vendorName && (
-                <>
-                  <Text style={styles.itemDot}>•</Text>
-                  <Text style={styles.itemVendor}>{vendorName}</Text>
-                </>
-              )}
-              <Text style={styles.itemDot}>•</Text>
               <Text style={styles.itemDate}>
-                {format(new Date(item.date), 'MMM d')}
+                {metaText}
               </Text>
             </View>
           </View>
         </View>
         <View style={styles.amountContainer}>
-          <Text style={styles.itemAmount}>{formatCurrency(displayAmount)}</Text>
-          {item.tax_rate && item.tax_rate > 0 && (
-            <View style={styles.taxIndicator}>
-              <Text style={styles.taxIndicatorText}>+tax</Text>
-            </View>
+        <View style={styles.amountColumn}>
+          <Text style={styles.itemAmount}>
+            {isBaseCurrency 
+              ? formatCurrency(displayAmount)
+              : `${getCurrencySymbol(item.currency || baseCurrency)} ${displayAmount.toFixed(2)}`
+            }
+          </Text>
+          {!isBaseCurrency && item.currency && (
+            <Text style={styles.itemCurrency}>{item.currency}</Text>
           )}
-          {item.receipt_url && (
-            <Feather name="paperclip" size={14} color={Colors.light.textTertiary} style={styles.receiptIcon} />
-          )}
-          <Feather name="chevron-right" size={16} color={Colors.light.textTertiary} />
         </View>
+        <Feather name="chevron-right" size={16} color={Colors.light.textTertiary} />
+      </View>
       </View>
     </TouchableOpacity>
   );
@@ -116,7 +111,7 @@ const ExpenseItem = ({
 
 export default function ExpensesScreen() {
   const { user } = useAuth();
-  const { formatCurrency } = useSettings();
+  const { formatCurrency, getCurrencySymbol, baseCurrency } = useSettings();
   const [refreshing, setRefreshing] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -190,9 +185,13 @@ export default function ExpensesScreen() {
 
   // Calculate totals for filtered (current month) expenses
   const currentMonthTotal = filteredExpenses.reduce((sum, item) => {
-    const total = item.amount + (item.tax_amount || 0);
-    return sum + total;
-  }, 0);
+  // Use base_amount WITHOUT tax for total (like income page)
+  if (item.base_amount) {
+    return sum + item.base_amount;
+  }
+  // Fallback to original amount WITHOUT tax
+  return sum + item.amount;
+}, 0);
   const currentMonthCount = filteredExpenses.length;
 
   return (
@@ -208,7 +207,7 @@ export default function ExpensesScreen() {
             <Text style={styles.headerTitle}>Expenses</Text>
             <View style={styles.headerStats}>
               <View style={styles.statItem}>
-                <Text style={styles.statLabel}>This Month</Text>
+                <Text style={styles.statLabel}>This Month ({baseCurrency})</Text>
                 <Text style={styles.statValue}>{formatCurrency(currentMonthTotal)}</Text>
               </View>
               <View style={styles.statDivider} />
@@ -396,6 +395,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
+  amountColumn: {
+  alignItems: 'flex-end',
+  marginRight: 8,
+},
+itemCurrency: {
+  fontSize: 11,
+  color: Colors.light.textSecondary,
+  fontWeight: '600',
+  marginTop: 2,
+},
   statDivider: {
     width: 1,
     height: 30,

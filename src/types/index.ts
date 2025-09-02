@@ -113,6 +113,26 @@ export interface Invoice {
   created_at: string;
   updated_at: string;
   income_category_id?: string;
+  base_amount?: number;
+  exchange_rate?: number;
+  tax_metadata?: {
+    has_line_item_vat?: boolean;
+    vat_breakdown?: Record<string, { net: number; vat: number; gross: number }>;
+    tax_label?: string;
+    tax_scheme?: string;
+    country_code?: string;
+    };
+}
+
+export interface NewInvoiceItem {
+  description: string;
+  quantity: number;
+  rate: number;
+  amount: number;
+  tax_rate?: number;
+  tax_amount?: number;
+  net_amount?: number;
+  gross_amount?: number;
 }
 
 export interface RecurringInvoice {
@@ -166,6 +186,10 @@ export interface InvoiceItem {
   rate: number;
   amount: number;
   created_at?: string;
+  tax_rate?: number;
+  tax_amount?: number;
+  net_amount?: number;
+  gross_amount?: number;
 }
 
 export interface InvoiceSettings {

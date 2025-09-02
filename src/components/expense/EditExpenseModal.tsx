@@ -41,7 +41,7 @@ export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
   onClose,
 }) => {
   const { user } = useAuth();
-  const { currencySymbol, formatCurrency } = useSettings();
+  const { currencySymbol, formatCurrency, baseCurrency, isUKBusiness, convertToBaseCurrency, getCurrencySymbol, enabledCurrencies, taxRates } = useSettings();
   const queryClient = useQueryClient();
   
   const [amount, setAmount] = useState('');
@@ -53,6 +53,25 @@ export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [taxRate, setTaxRate] = useState("0");
   const [includeTax, setIncludeTax] = useState(false);
+  
+const [currency, setCurrency] = useState(baseCurrency);
+const [showCurrencySelector, setShowCurrencySelector] = useState(false);
+const [convertedPreview, setConvertedPreview] = useState(0);
+const [availableCurrencies, setAvailableCurrencies] = useState<Array<{code: string, symbol: string, name: string}>>([]);
+
+const CURRENCY_NAMES: Record<string, string> = {
+  USD: 'US Dollar',
+  EUR: 'Euro',
+  GBP: 'British Pound',
+  PKR: 'Pakistani Rupee',
+  INR: 'Indian Rupee',
+  AUD: 'Australian Dollar',
+  CAD: 'Canadian Dollar',
+  JPY: 'Japanese Yen',
+  CNY: 'Chinese Yuan',
+  AED: 'UAE Dirham',
+  SAR: 'Saudi Riyal',
+};
   
   // Quick add modal states
   const [showAddVendor, setShowAddVendor] = useState(false);
@@ -79,7 +98,7 @@ export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
       setSelectedVendor(expense.vendor_id || '');
       setSelectedCategory(expense.category_id || '');
       setSelectedDate(new Date(expense.date));
-      
+      setCurrency(expense.currency || baseCurrency);
       // Set tax fields
       if (expense.tax_rate && expense.tax_rate > 0) {
         setTaxRate(expense.tax_rate.toString());
@@ -90,6 +109,29 @@ export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
       }
     }
   }, [expense]);
+
+  // Load enabled currencies from settings
+React.useEffect(() => {
+  if (visible && enabledCurrencies) {
+    const currencies = enabledCurrencies.map(code => ({
+      code,
+      symbol: getCurrencySymbol(code),
+      name: CURRENCY_NAMES[code] || code
+    }));
+    setAvailableCurrencies(currencies);
+  }
+}, [visible, enabledCurrencies, getCurrencySymbol]);
+
+// Preview conversion
+React.useEffect(() => {
+  if (currency !== baseCurrency && amount) {
+    convertToBaseCurrency(parseFloat(amount || '0'), currency)
+      .then(({ baseAmount }) => setConvertedPreview(baseAmount))
+      .catch(() => setConvertedPreview(0));
+  } else {
+    setConvertedPreview(0);
+  }
+}, [amount, currency, baseCurrency, convertToBaseCurrency]);
 
   const { data: vendors, refetch: refetchVendors } = useQuery({
     queryKey: ['vendors', user?.id],
@@ -114,33 +156,46 @@ export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
   });
 
   const handleSubmit = async () => {
-    if (!amount || !description || !expense) return;
+  if (!amount || !description || !expense) return;
 
-    setLoading(true);
+  setLoading(true);
+  
+  try {
+    const amountNum = parseFloat(amount);
+    const taxRateNum = includeTax ? (parseFloat(taxRate) || 0) : 0;
+    const taxAmountCalc = taxRateNum > 0 ? (amountNum * taxRateNum) / 100 : 0;
+
+    // Convert to base currency if currency is different
+    let baseAmount = amountNum;
+    let exchangeRate = 1;
     
-    try {
-      const baseAmount = parseFloat(amount);
-      const taxRateNum = includeTax ? (parseFloat(taxRate) || 0) : 0;
-      const taxAmountCalc = taxRateNum > 0 ? (baseAmount * taxRateNum) / 100 : 0;
-
-      const updates = {
-        amount: baseAmount,
-        description,
-        vendor_id: selectedVendor || null,
-        category_id: selectedCategory || null,
-        date: format(selectedDate, 'yyyy-MM-dd'),
-        tax_rate: taxRateNum || null,
-        tax_amount: taxAmountCalc || null,
-      };
-
-      await updateMutation.mutateAsync({ id: expense.id, data: updates });
-    } catch (error) {
-      console.error('Update error:', error);
-      Alert.alert('Error', 'Failed to update expense');
-    } finally {
-      setLoading(false);
+    if (currency !== expense.currency) {
+      const converted = await convertToBaseCurrency(amountNum, currency);
+      baseAmount = converted.baseAmount;
+      exchangeRate = converted.exchangeRate;
     }
-  };
+
+    const updates = {
+      amount: amountNum,
+      description,
+      vendor_id: selectedVendor || null,
+      category_id: selectedCategory || null,
+      date: format(selectedDate, 'yyyy-MM-dd'),
+      tax_rate: taxRateNum || null,
+      tax_amount: taxAmountCalc || null,
+      currency: currency,
+      base_amount: baseAmount,
+      exchange_rate: exchangeRate,
+    };
+
+    await updateMutation.mutateAsync({ id: expense.id, data: updates });
+  } catch (error) {
+    console.error('Update error:', error);
+    Alert.alert('Error', 'Failed to update expense');
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleQuickAddVendor = async () => {
     if (!newVendorData.name.trim() || !user) return;
@@ -250,17 +305,35 @@ export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
                   </View>
                 )}
 
-                {/* Amount Input */}
-                <View style={styles.amountInputContainer}>
-                  <Text style={styles.currencySymbol}>{currencySymbol}</Text>
-                  <TextInput
-                    style={styles.amountInput}
-                    placeholder="0.00"
-                    placeholderTextColor={Colors.light.textTertiary}
-                    value={amount}
-                    onChangeText={setAmount}
-                    keyboardType="decimal-pad"
-                  />
+                {/* Amount Input with Currency Selector */}
+                <View style={styles.amountSection}>
+                  <Text style={styles.inputLabel}>Amount</Text>
+                  <View style={styles.amountRow}>
+                    <TouchableOpacity 
+                      style={styles.currencySelector}
+                      onPress={() => setShowCurrencySelector(true)}
+                    >
+                      <Text style={styles.currencySelectorText}>
+                        {getCurrencySymbol(currency)} {currency}
+                      </Text>
+                      <Feather name="chevron-down" size={16} color={Colors.light.textSecondary} />
+                    </TouchableOpacity>
+                    <View style={styles.amountInputContainer}>
+                      <TextInput
+                        style={styles.amountInput}
+                        placeholder="0.00"
+                        placeholderTextColor={Colors.light.textTertiary}
+                        value={amount}
+                        onChangeText={setAmount}
+                        keyboardType="decimal-pad"
+                      />
+                    </View>
+                  </View>
+                  {currency !== baseCurrency && amount && convertedPreview > 0 && (
+                    <Text style={styles.conversionNote}>
+                      ≈ {formatCurrency(convertedPreview)} (will be converted at current rate)
+                    </Text>
+                  )}
                 </View>
 
                 {/* Description */}
@@ -273,43 +346,88 @@ export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
                 />
 
                 {/* Tax Section */}
-                <TouchableOpacity
-                  style={styles.taxToggle}
-                  onPress={() => setIncludeTax(!includeTax)}
-                >
-                  <MaterialIcons 
-                    name={includeTax ? "check-box" : "check-box-outline-blank"} 
-                    size={24} 
-                    color="#EF4444" 
-                  />
-                  <Text style={styles.taxToggleText}>Apply Tax</Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.taxToggle}
+                    onPress={() => setIncludeTax(!includeTax)}
+                  >
+                    <MaterialIcons 
+                      name={includeTax ? "check-box" : "check-box-outline-blank"} 
+                      size={24} 
+                      color="#EF4444" 
+                    />
+                    <Text style={styles.taxToggleText}>
+                      {isUKBusiness ? 'Apply VAT' : 'Apply Tax'}
+                    </Text>
+                  </TouchableOpacity>
 
-                {includeTax && (
-                  <View style={styles.taxSection}>
-                    <Text style={styles.inputLabel}>Tax Rate (%)</Text>
-                    <View style={styles.taxInputContainer}>
-                      <TextInput
-                        style={styles.taxInput}
-                        placeholder="0"
-                        value={taxRate}
-                        onChangeText={setTaxRate}
-                        keyboardType="decimal-pad"
-                      />
-                      <Text style={styles.taxPercent}>%</Text>
+                  {includeTax && (
+                    <View style={styles.taxSection}>
+                      <Text style={styles.inputLabel}>{isUKBusiness ? 'VAT Rate' : 'Tax Rate'}</Text>
+                      
+                      {/* Show saved tax rates as buttons */}
+                      {taxRates && Object.keys(taxRates).length > 0 ? (
+                        <View style={styles.taxRateButtons}>
+                          {Object.entries(taxRates).map(([name, rate]) => (
+                            <TouchableOpacity
+                              key={name}
+                              style={[
+                                styles.taxRateButton,
+                                taxRate === String(rate) && styles.taxRateButtonSelected
+                              ]}
+                              onPress={() => setTaxRate(String(rate))}
+                            >
+                              <Text style={[
+                                styles.taxRateButtonText,
+                                taxRate === String(rate) && styles.taxRateButtonTextSelected
+                              ]}>
+                                {name}
+                              </Text>
+                              <Text style={[
+                                styles.taxRatePercent,
+                                taxRate === String(rate) && styles.taxRatePercentSelected
+                              ]}>
+                                {rate}%
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                          <TouchableOpacity
+                            style={[
+                              styles.taxRateButton,
+                              !Object.values(taxRates).includes(Number(taxRate)) && taxRate !== "0" && styles.taxRateButtonSelected
+                            ]}
+                            onPress={() => setTaxRate("0")}
+                          >
+                            <Text style={styles.taxRateButtonText}>Custom</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
+                      
+                      {/* Show input for custom rate or if no saved rates */}
+                      {(!taxRates || Object.keys(taxRates).length === 0 || !Object.values(taxRates).includes(Number(taxRate))) && (
+                        <View style={styles.taxInputContainer}>
+                          <TextInput
+                            style={styles.taxInput}
+                            placeholder="0"
+                            value={taxRate}
+                            onChangeText={setTaxRate}
+                            keyboardType="decimal-pad"
+                          />
+                          <Text style={styles.taxPercent}>%</Text>
+                        </View>
+                      )}
+                      
+                      {parseFloat(taxRate) > 0 && parseFloat(amount) > 0 && (
+                        <View style={styles.taxCalculation}>
+                          <Text style={styles.taxCalcText}>
+                            Tax: {getCurrencySymbol(currency)} {(parseFloat(amount) * parseFloat(taxRate) / 100).toFixed(2)}
+                          </Text>
+                          <Text style={styles.taxCalcText}>
+                            Total: {getCurrencySymbol(currency)} {(parseFloat(amount) * (1 + parseFloat(taxRate) / 100)).toFixed(2)}
+                          </Text>
+                        </View>
+                      )}
                     </View>
-                    {parseFloat(taxRate) > 0 && parseFloat(amount) > 0 && (
-                      <View style={styles.taxCalculation}>
-                        <Text style={styles.taxCalcText}>
-                          Tax: {formatCurrency(parseFloat(amount) * parseFloat(taxRate) / 100)}
-                        </Text>
-                        <Text style={styles.taxCalcText}>
-                          Total: {formatCurrency(parseFloat(amount) * (1 + parseFloat(taxRate) / 100))}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                )}
+                  )}
 
                 {/* Date Picker */}
                 <TouchableOpacity
@@ -603,6 +721,47 @@ export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
           </View>
         </View>
       </Modal>
+      {/* Currency Selector Modal */}
+<Modal
+  visible={showCurrencySelector}
+  animationType="fade"
+  transparent
+  onRequestClose={() => setShowCurrencySelector(false)}
+>
+  <TouchableOpacity 
+    style={styles.modalOverlay}
+    activeOpacity={1}
+    onPress={() => setShowCurrencySelector(false)}
+  >
+    <View style={styles.currencyModalContent}>
+      <Text style={styles.currencyModalTitle}>Select Currency</Text>
+      {availableCurrencies.map((curr) => (
+        <TouchableOpacity
+          key={curr.code}
+          style={[
+            styles.currencyOption,
+            currency === curr.code && styles.currencyOptionSelected
+          ]}
+          onPress={() => {
+            setCurrency(curr.code);
+            setShowCurrencySelector(false);
+          }}
+        >
+          <View style={styles.currencyOptionLeft}>
+            <Text style={styles.currencySymbolDisplay}>{curr.symbol}</Text>
+            <View>
+              <Text style={styles.currencyCode}>{curr.code}</Text>
+              <Text style={styles.currencyName}>{curr.name}</Text>
+            </View>
+          </View>
+          {currency === curr.code && (
+            <Feather name="check" size={20} color="#EF4444" />
+          )}
+        </TouchableOpacity>
+      ))}
+    </View>
+  </TouchableOpacity>
+</Modal>
     </>
   );
 };
@@ -613,6 +772,117 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
   },
+  amountSection: {
+  marginBottom: Spacing.md,
+},
+amountRow: {
+  flexDirection: 'row',
+  gap: Spacing.sm,
+},
+currencySelector: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  paddingHorizontal: Spacing.md,
+  paddingVertical: Spacing.md,
+  backgroundColor: Colors.light.backgroundSecondary,
+  borderRadius: BorderRadius.md,
+  borderWidth: 1.5,
+  borderColor: Colors.light.border,
+  minWidth: 110,
+},
+currencySelectorText: {
+  fontSize: 16,
+  fontWeight: '600',
+  color: Colors.light.text,
+},
+conversionNote: {
+  fontSize: 12,
+  color: Colors.light.textSecondary,
+  marginTop: Spacing.xs,
+  fontStyle: 'italic',
+},
+currencyModalContent: {
+  backgroundColor: Colors.light.background,
+  borderRadius: BorderRadius.xl,
+  padding: Spacing.lg,
+  margin: Spacing.xl,
+  maxHeight: '70%',
+},
+currencyModalTitle: {
+  fontSize: 18,
+  fontWeight: '600',
+  color: Colors.light.text,
+  marginBottom: Spacing.md,
+},
+currencyOption: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  paddingVertical: Spacing.md,
+  paddingHorizontal: Spacing.sm,
+  borderBottomWidth: 1,
+  borderBottomColor: Colors.light.border,
+},
+currencyOptionSelected: {
+  backgroundColor: '#EF4444' + '10',
+},
+currencyOptionLeft: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: Spacing.md,
+},
+currencySymbolDisplay: {
+  fontSize: 20,
+  fontWeight: '600',
+  color: Colors.light.text,
+  width: 30,
+},
+currencyCode: {
+  fontSize: 16,
+  fontWeight: '600',
+  color: Colors.light.text,
+},
+currencyName: {
+  fontSize: 13,
+  color: Colors.light.textSecondary,
+},
+taxRateButtons: {
+  flexDirection: 'row',
+  flexWrap: 'wrap',
+  gap: Spacing.sm,
+  marginBottom: Spacing.sm,
+},
+taxRateButton: {
+  paddingVertical: Spacing.sm,
+  paddingHorizontal: Spacing.md,
+  backgroundColor: Colors.light.backgroundSecondary,
+  borderRadius: BorderRadius.md,
+  borderWidth: 1.5,
+  borderColor: Colors.light.border,
+  minWidth: 80,
+  alignItems: 'center',
+},
+taxRateButtonSelected: {
+  backgroundColor: '#EF4444' + '15',
+  borderColor: '#EF4444',
+},
+taxRateButtonText: {
+  fontSize: 13,
+  color: Colors.light.text,
+  fontWeight: '500',
+},
+taxRateButtonTextSelected: {
+  color: '#EF4444',
+  fontWeight: '600',
+},
+taxRatePercent: {
+  fontSize: 11,
+  color: Colors.light.textSecondary,
+},
+taxRatePercentSelected: {
+  color: '#EF4444',
+},
   modalContent: {
     backgroundColor: Colors.light.background,
     borderTopLeftRadius: BorderRadius.xl,
@@ -661,16 +931,16 @@ const styles = StyleSheet.create({
     resizeMode: 'cover',
   },
   amountInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFEBEE',
-    borderRadius: BorderRadius.lg,
-    paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.md,
-    height: 64,
-    borderWidth: 1.5,
-    borderColor: '#FFCDD2',
-  },
+  flex: 1,  // Add this
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#FFEBEE',
+  borderRadius: BorderRadius.lg,
+  paddingHorizontal: Spacing.md,
+  height: 64,
+  borderWidth: 1.5,
+  borderColor: '#FFCDD2',
+},
   currencySymbol: {
     fontSize: 28,
     fontWeight: '600',

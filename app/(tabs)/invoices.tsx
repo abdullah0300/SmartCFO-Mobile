@@ -25,27 +25,29 @@ import { getInvoices } from '../../src/services/api';
 import { Colors, Spacing, Typography, BorderRadius } from '../../src/constants/Colors';
 import { Invoice } from '../../src/types';
 
-// Type assertion helper for colors
-const getColors = (colors: string[]): readonly [string, string, ...string[]] => {
-  return colors as readonly [string, string, ...string[]];
-};
+
 
 interface InvoiceItemProps {
   item: Invoice;
   onPress: (invoice: Invoice) => void;
   formatCurrency: (amount: number | undefined | null) => string;
   currencySymbol: string;
+  getCurrencySymbol: (currency: string) => string;
+  baseCurrency: string;
 }
 
+
+
 const InvoiceItem: React.FC<InvoiceItemProps> = ({ item, onPress, formatCurrency, currencySymbol }) => {
+    const { getCurrencySymbol, baseCurrency } = useSettings(); 
   const getStatusGradient = (status: string | undefined): readonly [string, string, ...string[]] => {
     switch (status) {
-      case 'paid': return getColors(['#10B981', '#059669']);
-      case 'sent': return getColors(['#8B5CF6', '#7C3AED']);
-      case 'overdue': return getColors(['#EF4444', '#DC2626']);
-      case 'draft': return getColors(['#6B7280', '#4B5563']);
-      case 'cancelled': return getColors(['#DC2626', '#991B1B']);
-      default: return getColors(['#6B7280', '#4B5563']);
+      case 'paid': return ['#10B981', '#059669'] as const;
+      case 'sent': return ['#8B5CF6', '#7C3AED'] as const;
+      case 'overdue': return ['#EF4444', '#DC2626'] as const;
+      case 'draft': return ['#6B7280', '#4B5563'] as const;
+      case 'cancelled': return ['#DC2626', '#991B1B'] as const;
+      default: return ['#6B7280', '#4B5563'] as const;
     }
   };
 
@@ -65,8 +67,9 @@ const InvoiceItem: React.FC<InvoiceItemProps> = ({ item, onPress, formatCurrency
     return status.charAt(0).toUpperCase() + status.slice(1);
   };
   
-  // Safely extract data with fallbacks - Updated to use 'total' field
-  const amount = item.total || item.total_amount || 0;
+  // Safely extract data with fallbacks - use 'total' based on Invoice type
+  const amount = item.total || 0;
+  const isBaseCurrency = !item.currency || item.currency === baseCurrency;
   const clientName = item.client?.name || 'Unknown Client';
   const dueDate = item.due_date || item.created_at || new Date().toISOString();
   const invoiceNumber = item.invoice_number || `INV-${item.id?.slice(0, 8)}` || 'N/A';
@@ -81,7 +84,7 @@ const InvoiceItem: React.FC<InvoiceItemProps> = ({ item, onPress, formatCurrency
       }}
     >
       <LinearGradient
-        colors={getColors(['#FFFFFF', '#F9FAFB'])}
+        colors={['#FFFFFF', '#F9FAFB'] as const}
         style={styles.invoiceItem}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
@@ -89,7 +92,7 @@ const InvoiceItem: React.FC<InvoiceItemProps> = ({ item, onPress, formatCurrency
         <View style={styles.itemContent}>
           <View style={styles.itemLeft}>
             <View style={styles.itemHeader}>
-              <Text style={styles.invoiceNumber}>{invoiceNumber}</Text>
+              <Text style={styles.invoiceNumber}>{String(invoiceNumber)}</Text>
               <LinearGradient
                 colors={getStatusGradient(status)}
                 style={styles.statusBadge}
@@ -102,12 +105,12 @@ const InvoiceItem: React.FC<InvoiceItemProps> = ({ item, onPress, formatCurrency
                   color="#FFFFFF" 
                 />
                 <Text style={styles.statusText}>
-                  {getStatusText(status)}
+                  {String(getStatusText(status))}
                 </Text>
               </LinearGradient>
             </View>
             <Text style={styles.clientName} numberOfLines={1}>
-              {clientName}
+              {String(clientName)}
             </Text>
             <View style={styles.itemMeta}>
               <Feather name="calendar" size={12} color="#9CA3AF" />
@@ -117,10 +120,20 @@ const InvoiceItem: React.FC<InvoiceItemProps> = ({ item, onPress, formatCurrency
             </View>
           </View>
           <View style={styles.amountContainer}>
-            <Text style={styles.itemAmount}>{formatCurrency(amount)}</Text>
-            <View style={styles.arrowContainer}>
+            <View style={styles.amountColumn}>
+              <Text style={styles.itemAmount}>
+                {isBaseCurrency 
+                  ? formatCurrency(amount)
+                  : `${getCurrencySymbol(item.currency || baseCurrency)} ${amount.toFixed(2)}`
+                }
+              </Text>
+              {!isBaseCurrency && item.currency && (
+                <Text style={styles.itemCurrency}>{item.currency}</Text>
+              )}
+            </View>
+              <View style={styles.arrowContainer}>
               <LinearGradient
-                colors={getColors(['#8B5CF6', '#7C3AED'])}
+                colors={['#8B5CF6', '#7C3AED'] as const}
                 style={styles.arrowGradient}
               >
                 <Feather name="arrow-right" size={16} color="#FFFFFF" />
@@ -132,10 +145,9 @@ const InvoiceItem: React.FC<InvoiceItemProps> = ({ item, onPress, formatCurrency
     </TouchableOpacity>
   );
 };
-
 export default function InvoicesScreen() {
   const { user } = useAuth();
-  const { formatCurrency, currencySymbol } = useSettings();
+  const { formatCurrency, currencySymbol, baseCurrency, getCurrencySymbol } = useSettings();
   const navigation = useNavigation<any>();
   const [refreshing, setRefreshing] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
@@ -168,21 +180,22 @@ export default function InvoicesScreen() {
 
   // Calculate stats with safe defaults - Updated to use 'total' field
   const stats = invoices?.reduce((acc, invoice) => {
-    const amount = invoice.total || invoice.total_amount || 0;
-    acc.total += amount;
-    if (invoice.status === 'paid') acc.paid += amount;
-    if (invoice.status === 'overdue') acc.overdue += amount;
-    if (invoice.status === 'sent') acc.pending += amount;
-    if (invoice.status === 'draft') acc.draft += amount;
-    return acc;
-  }, { total: 0, paid: 0, overdue: 0, pending: 0, draft: 0 }) || { total: 0, paid: 0, overdue: 0, pending: 0, draft: 0 };
+  // Use base_amount for multi-currency support
+  const amount = invoice.base_amount || invoice.total || 0;
+  acc.total += amount;
+  if (invoice.status === 'paid') acc.paid += amount;
+  if (invoice.status === 'overdue') acc.overdue += amount;
+  if (invoice.status === 'sent') acc.pending += amount;
+  if (invoice.status === 'draft') acc.draft += amount;
+  return acc;
+}, { total: 0, paid: 0, overdue: 0, pending: 0, draft: 0 }) || { total: 0, paid: 0, overdue: 0, pending: 0, draft: 0 };
 
   if (error) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.errorContainer}>
           <LinearGradient
-            colors={getColors(['#FEE2E2', '#FECACA'])}
+            colors={['#FEE2E2', '#FECACA'] as const}
             style={styles.errorIcon}
           >
             <Feather name="alert-circle" size={48} color="#EF4444" />
@@ -190,7 +203,7 @@ export default function InvoicesScreen() {
           <Text style={styles.errorText}>Failed to load invoices</Text>
           <TouchableOpacity onPress={() => refetch()}>
             <LinearGradient
-              colors={getColors(['#8B5CF6', '#7C3AED'])}
+              colors={['#8B5CF6', '#7C3AED'] as const}
               style={styles.retryButton}
             >
               <Text style={styles.retryText}>Retry</Text>
@@ -204,7 +217,7 @@ export default function InvoicesScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <LinearGradient
-        colors={getColors(['#8B5CF6', '#7C3AED', '#6D28D9'])}
+        colors={['#8B5CF6', '#7C3AED', '#6D28D9'] as const}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.headerGradient}
@@ -221,7 +234,7 @@ export default function InvoicesScreen() {
             >
               <BlurView intensity={80} tint="light" style={styles.addButtonBlur}>
                 <LinearGradient
-                  colors={getColors(['rgba(255,255,255,0.9)', 'rgba(255,255,255,0.7)'])}
+                  colors={['rgba(255,255,255,0.9)', 'rgba(255,255,255,0.7)'] as const}
                   style={styles.addButtonInner}
                 >
                   <Feather name="plus" size={24} color="#7C3AED" />
@@ -242,14 +255,14 @@ export default function InvoicesScreen() {
             >
               <LinearGradient
                 colors={selectedFilter === 'all' 
-                  ? getColors(['rgba(255,255,255,0.3)', 'rgba(255,255,255,0.2)'])
-                  : getColors(['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.1)'])}
+                 ? ['rgba(255,255,255,0.3)', 'rgba(255,255,255,0.2)'] as const
+                  : ['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.1)'] as const}
                 style={[styles.statCard, selectedFilter === 'all' && styles.statCardActive]}
               >
                 <View style={styles.statIconContainer}>
                   <MaterialIcons name="receipt" size={20} color="rgba(255,255,255,0.9)" />
                 </View>
-                <Text style={styles.statLabel}>Total Revenue</Text>
+                <Text style={styles.statLabel}>Total Revenue ({baseCurrency})</Text>
                 <Text style={styles.statValue}>{formatCurrency(stats.total)}</Text>
                 <Text style={styles.statCount}>{invoices?.length || 0} invoices</Text>
               </LinearGradient>
@@ -261,8 +274,8 @@ export default function InvoicesScreen() {
             >
               <LinearGradient
                 colors={selectedFilter === 'paid' 
-                  ? getColors(['rgba(16,185,129,0.3)', 'rgba(16,185,129,0.2)'])
-                  : getColors(['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.1)'])}
+                  ? ['rgba(16,185,129,0.3)', 'rgba(16,185,129,0.2)'] as const
+                  : ['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.1)'] as const}
                 style={[styles.statCard, selectedFilter === 'paid' && styles.statCardActive]}
               >
                 <View style={[styles.statIconContainer, { backgroundColor: 'rgba(16,185,129,0.3)' }]}>
@@ -284,8 +297,8 @@ export default function InvoicesScreen() {
             >
               <LinearGradient
                 colors={selectedFilter === 'sent' 
-                  ? getColors(['rgba(139,92,246,0.3)', 'rgba(139,92,246,0.2)'])
-                  : getColors(['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.1)'])}
+                  ? ['rgba(139,92,246,0.3)', 'rgba(139,92,246,0.2)'] as const
+                  : ['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.1)'] as const}
                 style={[styles.statCard, selectedFilter === 'sent' && styles.statCardActive]}
               >
                 <View style={[styles.statIconContainer, { backgroundColor: 'rgba(139,92,246,0.3)' }]}>
@@ -307,8 +320,8 @@ export default function InvoicesScreen() {
             >
               <LinearGradient
                 colors={selectedFilter === 'overdue' 
-                  ? getColors(['rgba(239,68,68,0.3)', 'rgba(239,68,68,0.2)'])
-                  : getColors(['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.1)'])}
+                  ? ['rgba(239,68,68,0.3)', 'rgba(239,68,68,0.2)'] as const
+                  : ['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.1)'] as const}
                 style={[styles.statCard, selectedFilter === 'overdue' && styles.statCardActive]}
               >
                 <View style={[styles.statIconContainer, { backgroundColor: 'rgba(239,68,68,0.3)' }]}>
@@ -341,6 +354,8 @@ export default function InvoicesScreen() {
               onPress={handleInvoicePress}
               formatCurrency={formatCurrency}
               currencySymbol={currencySymbol}
+              getCurrencySymbol={getCurrencySymbol}
+              baseCurrency={baseCurrency}
             />
           )}
           contentContainerStyle={styles.listContent}
@@ -355,7 +370,7 @@ export default function InvoicesScreen() {
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <LinearGradient
-                colors={getColors(['#EDE9FE', '#DDD6FE'])}
+                colors={['#EDE9FE', '#DDD6FE'] as const}
                 style={styles.emptyIcon}
               >
                 <MaterialIcons name="receipt-long" size={48} color="#8B5CF6" />
@@ -376,7 +391,7 @@ export default function InvoicesScreen() {
                   activeOpacity={0.8}
                 >
                   <LinearGradient
-                    colors={getColors(['#8B5CF6', '#7C3AED'])}
+                    colors={['#8B5CF6', '#7C3AED'] as const}
                     style={styles.emptyButtonGradient}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
@@ -658,5 +673,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  amountColumn: {
+    alignItems: 'flex-end',
+  },
+  itemCurrency: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    fontWeight: '600',
+    marginTop: 2,
   },
 });

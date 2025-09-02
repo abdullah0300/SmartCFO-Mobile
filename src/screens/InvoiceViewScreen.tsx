@@ -38,8 +38,7 @@ const { width: screenWidth } = Dimensions.get('window');
 type RootStackParamList = {
   Main: undefined;
   InvoiceView: { invoiceId: string };
-  CreateInvoice: undefined;
-  EditInvoice: { invoiceId: string };
+  CreateInvoice: { invoiceId?: string } | undefined;
 };
 type InvoiceViewNavigationProp = NativeStackNavigationProp<RootStackParamList, 'InvoiceView'>;
 type InvoiceViewRouteProp = RouteProp<RootStackParamList, 'InvoiceView'>;
@@ -47,17 +46,22 @@ export default function InvoiceViewScreen() {
   const navigation = useNavigation<InvoiceViewNavigationProp>();
   const route = useRoute<InvoiceViewRouteProp>();
   const { user } = useAuth();
-  const { formatCurrency, currencySymbol } = useSettings();
+  const { formatCurrency, getCurrencySymbol, baseCurrency } = useSettings();
   const queryClient = useQueryClient();
   
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [invoiceSettings, setInvoiceSettings] = useState<InvoiceSettings | null>(null);
+  const currencySymbol = invoice?.currency ? getCurrencySymbol(invoice.currency) : getCurrencySymbol(baseCurrency);
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [generatingPDF, setGeneratingPDF] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  const formatAmount = (amount: number, currency?: string) => {
+    const symbol = getCurrencySymbol(currency || baseCurrency);
+    return `${symbol}${amount.toFixed(2)}`;
+  };
   
   const invoiceId = route.params?.invoiceId;
 
@@ -139,10 +143,6 @@ export default function InvoiceViewScreen() {
     }
   };
 
-  // src/screens/InvoiceViewScreen.tsx - Replace the handleDownloadPDF function
-
-// src/screens/InvoiceViewScreen.tsx - Replace ONLY the handleDownloadPDF function
-
 const handleDownloadPDF = async () => {
   if (!invoice || !user) return;
   
@@ -151,69 +151,77 @@ const handleDownloadPDF = async () => {
     
     // Get session
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) throw new Error('No session');
-    
-    // Call edge function to get PDF
-    const response = await fetch(
-      `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/generate-invoice-pdf`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ invoiceId: invoice.id }),
-      }
-    );
-    
-    if (!response.ok) {
-      throw new Error('Failed to generate PDF');
+    if (!session) {
+      Alert.alert('Error', 'No active session. Please login again.');
+      return;
     }
     
-    // Get the PDF blob from edge function
+    // Use the hardcoded URL from your supabase.ts
+    const functionUrl = 'https://adsbnzqorfmgnneiopcr.supabase.co/functions/v1/generate-invoice-pdf';
+    
+    console.log('Calling PDF function...');
+    
+    const response = await fetch(functionUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+        'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFkc2JuenFvcmZtZ25uZWlvcGNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg3NzM1NzAsImV4cCI6MjA2NDM0OTU3MH0.To7RgYgKu1yKVBSNVYzvce92kcLAXW0G_9jppFdeaU4', // Add the anon key
+      },
+      body: JSON.stringify({ invoiceId: invoice.id }),
+    });
+    
+    console.log('Response status:', response.status);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('PDF generation failed:', errorText);
+      throw new Error(`Failed to generate PDF: ${errorText}`);
+    }
+    
+    // Get the PDF blob
     const blob = await response.blob();
     
-    // Convert blob to base64
+    // Convert blob to base64 for React Native
     const reader = new FileReader();
     reader.readAsDataURL(blob);
+    
     reader.onloadend = async () => {
       try {
         const base64data = reader.result as string;
-        
-        // Save the PDF using expo-file-system
-        const fileUri = `${FileSystem.documentDirectory}invoice-${invoice.invoice_number}.pdf`;
-        
-        // Extract base64 content (remove data:application/pdf;base64, prefix)
         const base64 = base64data.split(',')[1];
         
-        // Write the file
+        // Save the PDF
+        const fileUri = `${FileSystem.documentDirectory}invoice-${invoice.invoice_number}.pdf`;
         await FileSystem.writeAsStringAsync(fileUri, base64, {
           encoding: FileSystem.EncodingType.Base64,
         });
         
-        // Share the PDF file
+        // Share the PDF
         if (await Sharing.isAvailableAsync()) {
           await Sharing.shareAsync(fileUri, {
             mimeType: 'application/pdf',
             dialogTitle: `Invoice ${invoice.invoice_number}`,
-            UTI: 'com.adobe.pdf', // for iOS
+            UTI: 'com.adobe.pdf',
           });
+          Alert.alert('Success', 'PDF generated successfully!');
         } else {
           Alert.alert('Success', 'PDF saved successfully!');
         }
       } catch (error) {
         console.error('Error saving PDF:', error);
-        throw error;
+        Alert.alert('Error', 'Failed to save PDF');
       }
     };
     
     reader.onerror = () => {
-      throw new Error('Failed to read PDF');
+      console.error('FileReader error');
+      Alert.alert('Error', 'Failed to read PDF data');
     };
     
-  } catch (error) {
-    console.error('Error generating PDF:', error);
-    Alert.alert('Error', 'Failed to generate PDF');
+  } catch (error: any) {
+    console.error('Full error:', error);
+    Alert.alert('Error', error.message || 'Failed to generate PDF');
   } finally {
     setGeneratingPDF(false);
   }
@@ -221,50 +229,58 @@ const handleDownloadPDF = async () => {
 
 
 
-  const handleSendEmail = async () => {
-    if (!invoice || !user || !invoice.client?.email) return;
+const handleSendEmail = async () => {
+  if (!invoice || !user || !invoice.client?.email) return;
+  
+  try {
+    setSendingEmail(true);
     
-    try {
-      setSendingEmail(true);
-      
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No session');
-      
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/send-invoice-email`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({
-            invoiceId: invoice.id,
-            recipientEmail: invoice.client.email,
-            attachPdf: true,
-          }),
-        }
-      );
-      
-      if (!response.ok) {
-        throw new Error('Failed to send email');
-      }
-      
-      // Update status to sent if it was draft
-      if (invoice.status === 'draft') {
-        await handleStatusChange('sent');
-      }
-      
-      Alert.alert('Success', 'Invoice sent successfully!');
-      
-    } catch (error) {
-      console.error('Error sending email:', error);
-      Alert.alert('Error', 'Failed to send invoice');
-    } finally {
-      setSendingEmail(false);
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      Alert.alert('Error', 'No active session. Please login again.');
+      return;
     }
-  };
-
+    
+    const functionUrl = 'https://adsbnzqorfmgnneiopcr.supabase.co/functions/v1/send-invoice-email';
+    
+    console.log('Sending email to:', invoice.client.email);
+    
+    const response = await fetch(functionUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+        'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFkc2JuenFvcmZtZ25uZWlvcGNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg3NzM1NzAsImV4cCI6MjA2NDM0OTU3MH0.To7RgYgKu1yKVBSNVYzvce92kcLAXW0G_9jppFdeaU4',
+      },
+      body: JSON.stringify({
+        invoiceId: invoice.id,
+        recipientEmail: invoice.client.email,
+        attachPdf: true,
+      }),
+    });
+    
+    console.log('Email response status:', response.status);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Email sending failed:', errorText);
+      throw new Error(`Failed to send email: ${errorText}`);
+    }
+    
+    // Update status to sent if it was draft
+    if (invoice.status === 'draft') {
+      await handleStatusChange('sent');
+    }
+    
+    Alert.alert('Success', 'Invoice sent successfully!');
+    
+  } catch (error: any) {
+    console.error('Full error:', error);
+    Alert.alert('Error', error.message || 'Failed to send invoice');
+  } finally {
+    setSendingEmail(false);
+  }
+};
   const handleShare = async () => {
     if (!invoice) return;
     
@@ -272,7 +288,7 @@ const handleDownloadPDF = async () => {
       const shareUrl = `${process.env.EXPO_PUBLIC_APP_URL}/invoices/public/${invoice.id}`;
       const message = `Invoice #${invoice.invoice_number}\n` +
         `Client: ${invoice.client?.name}\n` +
-        `Amount: ${formatCurrency(invoice.total)}\n` +
+        `Amount: ${formatAmount(invoice.total, invoice.currency)}\n` +
         `Due Date: ${format(new Date(invoice.due_date), 'MMM dd, yyyy')}\n\n` +
         `View invoice: ${shareUrl}`;
       
@@ -452,49 +468,99 @@ const handleDownloadPDF = async () => {
               </View>
             </View>
 
-            {/* Items Table */}
-            <View style={styles.itemsSection}>
-              <View style={styles.itemsHeader}>
-                <Text style={[styles.itemHeaderText, styles.itemDescription]}>Description</Text>
-                <Text style={[styles.itemHeaderText, styles.itemQty]}>Qty</Text>
-                <Text style={[styles.itemHeaderText, styles.itemRate]}>Rate</Text>
-                <Text style={[styles.itemHeaderText, styles.itemAmount]}>Amount</Text>
-              </View>
+           {/* Items Table */}
+          <View style={styles.itemsSection}>
+            <View style={styles.itemsHeader}>
+              <Text style={[styles.itemHeaderText, styles.itemDescription]}>Description</Text>
+              <Text style={[styles.itemHeaderText, styles.itemQty]}>Qty</Text>
+              <Text style={[styles.itemHeaderText, styles.itemRate]}>Rate</Text>
+              {invoice.tax_metadata?.has_line_item_vat && (
+                <>
+                  <Text style={[styles.itemHeaderText, styles.itemTax]}>
+                    {invoice.tax_metadata?.tax_label || 'Tax'}%
+                  </Text>
+                </>
+              )}
+              <Text style={[styles.itemHeaderText, styles.itemAmount]}>
+                {invoice.tax_metadata?.has_line_item_vat ? 'Total' : 'Amount'}
+              </Text>
+            </View>
 
-              {invoice.items?.map((item, index) => (
-                <View key={item.id || index} style={styles.itemRow}>
-                  <Text style={[styles.itemText, styles.itemDescription]} numberOfLines={2}>
-                    {item.description}
+             {invoice.items?.map((item, index) => (
+              <View key={item.id || index} style={styles.itemRow}>
+                <Text style={[styles.itemText, styles.itemDescription]} numberOfLines={2}>
+                  {item.description}
+                </Text>
+                <Text style={[styles.itemText, styles.itemQty]}>{item.quantity}</Text>
+                <Text style={[styles.itemText, styles.itemRate]}>
+                  {formatAmount(item.rate, invoice.currency)}
+                </Text>
+                {invoice.tax_metadata?.has_line_item_vat && (
+                  <Text style={[styles.itemText, styles.itemTax]}>
+                    {item.tax_rate || 0}%
                   </Text>
-                  <Text style={[styles.itemText, styles.itemQty]}>{item.quantity}</Text>
-                  <Text style={[styles.itemText, styles.itemRate]}>
-                    {formatCurrency(item.rate)}
-                  </Text>
-                  <Text style={[styles.itemText, styles.itemAmount]}>
-                    {formatCurrency(item.amount)}
-                  </Text>
-                </View>
-              ))}
+                )}
+                <Text style={[styles.itemText, styles.itemAmount]}>
+                  {formatAmount(
+                    invoice.tax_metadata?.has_line_item_vat 
+                      ? (item.gross_amount || item.amount)
+                      : item.amount,
+                    invoice.currency
+                  )}
+                </Text>
+              </View>
+            ))}
             </View>
 
             {/* Totals */}
-            <View style={styles.totalsSection}>
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Subtotal</Text>
-                <Text style={styles.totalValue}>{formatCurrency(invoice.subtotal)}</Text>
-              </View>
-              
-              {invoice.tax_rate > 0 && (
+              <View style={styles.totalsSection}>
                 <View style={styles.totalRow}>
-                  <Text style={styles.totalLabel}>Tax ({invoice.tax_rate}%)</Text>
-                  <Text style={styles.totalValue}>{formatCurrency(invoice.tax_amount)}</Text>
+                  <Text style={styles.totalLabel}>
+                    {invoice.tax_metadata?.has_line_item_vat ? 'Net Total' : 'Subtotal'}
+                  </Text>
+                  <Text style={styles.totalValue}>
+                    {formatAmount(invoice.subtotal, invoice.currency)}
+                  </Text>
                 </View>
-              )}
+                
+                {/* VAT Breakdown for UK/EU users */}
+                {invoice.tax_metadata?.vat_breakdown && Object.entries(invoice.tax_metadata.vat_breakdown).map(([rate, data]: [string, any]) => (
+                  data.vat > 0 && (
+                    <View key={rate} style={styles.totalRow}>
+                      <Text style={styles.totalLabel}>
+                        {invoice.tax_metadata?.tax_label || 'Tax'} @ {rate}%
+                      </Text>
+                      <Text style={styles.totalValue}>
+                        {formatAmount(data.vat, invoice.currency)}
+                      </Text>
+                    </View>
+                  )
+                ))}
+                
+                {/* Standard tax for non-VAT countries */}
+                {!invoice.tax_metadata?.has_line_item_vat && invoice.tax_rate > 0 && (
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>Tax ({invoice.tax_rate}%)</Text>
+                    <Text style={styles.totalValue}>
+                      {formatAmount(invoice.tax_amount, invoice.currency)}
+                    </Text>
+                  </View>
+                )}
+            
               
               <View style={[styles.totalRow, styles.grandTotalRow]}>
-                <Text style={styles.grandTotalLabel}>Total Due</Text>
-                <Text style={styles.grandTotalValue}>{formatCurrency(invoice.total)}</Text>
+              <Text style={styles.grandTotalLabel}>Total Due</Text>
+              <View style={styles.totalValueContainer}>
+                <Text style={styles.grandTotalValue}>
+                  {formatAmount(invoice.total, invoice.currency)}
+                </Text>
+                {invoice.currency !== baseCurrency && invoice.base_amount && (
+                  <Text style={styles.conversionNote}>
+                    ({formatAmount(invoice.base_amount, baseCurrency)} base)
+                  </Text>
+                )}
               </View>
+            </View>
             </View>
 
             {/* Notes */}
@@ -556,7 +622,7 @@ const handleDownloadPDF = async () => {
           <View style={styles.mainActions}>
             <TouchableOpacity
               style={[styles.actionButton, styles.editButton]}
-              onPress={() => navigation.navigate('EditInvoice', { invoiceId: invoice.id })}
+              onPress={() => navigation.navigate('CreateInvoice', { invoiceId: invoice.id })}
             >
               <Feather name="edit-2" size={18} color="#6B7280" />
               <Text style={styles.actionButtonText}>Edit</Text>
@@ -739,6 +805,18 @@ const styles = StyleSheet.create({
   },
   section: {
     marginBottom: Spacing.lg,
+  },
+    itemTax: {
+  flex: 0.8,
+  textAlign: 'center',
+  },
+  totalValueContainer: {
+    alignItems: 'flex-end',
+  },
+  conversionNote: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
   },
   sectionTitle: {
     fontSize: 14,

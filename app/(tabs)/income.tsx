@@ -35,26 +35,17 @@ const IncomeItem = ({
   item: Income; 
   onPress: (income: Income) => void;
 }) => {
-  const { formatCurrency } = useSettings();
-  // Calculate total amount including tax
-  const displayAmount = item.amount + (item.tax_amount || 0);
+  const { formatCurrency, getCurrencySymbol, baseCurrency } = useSettings();
+  const displayAmount = item.amount; 
+  const isBaseCurrency = !item.currency || item.currency === baseCurrency;
   
-  // Helper function to safely get client name
-  const getClientName = (): string | null => {
-    if (!item.client) return null;
-    
-    if (typeof item.client === 'string') {
-      return item.client;
-    }
-    
-    if (typeof item.client === 'object' && item.client !== null && 'name' in item.client) {
-      return item.client.name || null;
-    }
-    
-    return null;
-  };
-  
-  const clientName = getClientName();
+  // Build meta text parts
+  const metaParts = [];
+  if (item.client?.name) {
+    metaParts.push(item.client.name);
+  }
+  metaParts.push(format(new Date(item.date), 'MMM d'));
+  const metaText = metaParts.join(' • ');
   
   return (
     <TouchableOpacity 
@@ -73,36 +64,34 @@ const IncomeItem = ({
           ]} />
           <View style={styles.itemDetails}>
             <Text style={styles.itemDescription} numberOfLines={1}>
-              {item.description}
+              {String(item.description)}
             </Text>
             <View style={styles.itemMeta}>
               <View style={[styles.categoryBadge, { backgroundColor: (item.category?.color || '#10B981') + '15' }]}>
                 <Text style={[styles.itemCategory, { color: item.category?.color || '#10B981' }]}>
-                  {item.category?.name || 'Uncategorized'}
+                  {String(item.category?.name || 'Uncategorized')}
                 </Text>
               </View>
-              {clientName && (
-                <>
-                  <Text style={styles.itemDot}>•</Text>
-                  <Text style={styles.itemClient}>{clientName}</Text>
-                </>
-              )}
-              <Text style={styles.itemDot}>•</Text>
               <Text style={styles.itemDate}>
-                {format(new Date(item.date), 'MMM d')}
+                {metaText}
               </Text>
             </View>
           </View>
         </View>
         <View style={styles.amountContainer}>
-          <Text style={styles.itemAmount}>{formatCurrency(displayAmount)}</Text>
-          {item.tax_rate && item.tax_rate > 0 && (
-            <View style={styles.taxIndicator}>
-              <Text style={styles.taxIndicatorText}>+tax</Text>
-            </View>
+        <View style={styles.amountColumn}>
+          <Text style={styles.itemAmount}>
+            {isBaseCurrency 
+              ? formatCurrency(displayAmount)
+              : `${getCurrencySymbol(item.currency || baseCurrency)} ${displayAmount.toFixed(2)}`
+            }
+          </Text>
+          {!isBaseCurrency && item.currency && (
+            <Text style={styles.itemCurrency}>{item.currency}</Text>
           )}
-          <Feather name="chevron-right" size={16} color={Colors.light.textTertiary} />
         </View>
+        <Feather name="chevron-right" size={16} color={Colors.light.textTertiary} />
+      </View>
       </View>
     </TouchableOpacity>
   );
@@ -110,7 +99,7 @@ const IncomeItem = ({
 
 export default function IncomeScreen() {
   const { user } = useAuth();
-  const { formatCurrency } = useSettings();
+  const { formatCurrency, baseCurrency } = useSettings();
   const [refreshing, setRefreshing] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -183,10 +172,14 @@ export default function IncomeScreen() {
   }, [allIncomes, searchQuery]);
 
   // Calculate totals for filtered (current month) incomes
-  const currentMonthTotal = filteredIncomes.reduce((sum, item) => {
-    const total = item.amount + (item.tax_amount || 0);
-    return sum + total;
-  }, 0);
+    const currentMonthTotal = filteredIncomes.reduce((sum, item) => {
+  // Use base_amount WITHOUT tax for total (like web app)
+  if (item.base_amount) {
+    return sum + item.base_amount;
+  }
+  // Fallback to original amount WITHOUT tax
+  return sum + item.amount;
+}, 0);
   const currentMonthCount = filteredIncomes.length;
 
   return (
@@ -203,7 +196,7 @@ export default function IncomeScreen() {
             <Text style={styles.headerTitle}>Income</Text>
             <View style={styles.headerStats}>
               <View style={styles.statItem}>
-                <Text style={styles.statLabel}>This Month</Text>
+                <Text style={styles.statLabel}>This Month ({baseCurrency})</Text>
                 <Text style={styles.statValue}>{formatCurrency(currentMonthTotal)}</Text>
               </View>
               <View style={styles.statDivider} />
@@ -415,6 +408,16 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 3,
+  },
+  amountColumn: {
+  alignItems: 'flex-end',
+  marginRight: 8,
+  },
+  itemCurrency: {
+    fontSize: 11,
+    color: Colors.light.textSecondary,
+    fontWeight: '600',
+    marginTop: 2,
   },
   searchContainer: {
     paddingHorizontal: Spacing.lg,

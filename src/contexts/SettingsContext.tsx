@@ -1,167 +1,338 @@
 // src/contexts/SettingsContext.tsx
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '../services/supabase';
+import { useAuth } from '../hooks/useAuth';
 
-interface SettingsContextData {
-  currency: string;
-  currencySymbol: string;
-  theme: 'light' | 'dark';
-  notifications: boolean;
-  biometrics: boolean;
-  setCurrency: (currency: string) => void;
-  setTheme: (theme: 'light' | 'dark') => void;
-  setNotifications: (enabled: boolean) => void;
-  setBiometrics: (enabled: boolean) => void;
-  formatCurrency: (amount: number | undefined | null) => string;
+interface UserSettings {
+  id: string;
+  user_id: string;
+  base_currency: string;
+  country?: string;
+  timezone?: string;
+  date_format?: string;
+  fiscal_year_start?: string;
+  enabled_currencies?: string[];
+  tax_rates?: Record<string, number>;
+  vat_number?: string;
+  uk_vat_scheme?: string;
 }
 
-const SettingsContext = createContext<SettingsContextData>({} as SettingsContextData);
+interface CurrencyFormatOptions {
+  currency?: string;
+  showCode?: boolean;
+}
 
-const STORAGE_KEYS = {
-  CURRENCY: '@smartcfo_currency',
-  THEME: '@smartcfo_theme',
-  NOTIFICATIONS: '@smartcfo_notifications',
-  BIOMETRICS: '@smartcfo_biometrics',
-};
+interface SettingsContextType {
+  settings: UserSettings | null;
+  baseCurrency: string;
+  userCountry: string;
+  currencySymbol: string;
+  enabledCurrencies: string[];
+  taxRates: Record<string, number>;
+  formatCurrency: (amount: number | undefined | null, options?: CurrencyFormatOptions) => string;
+  getCurrencySymbol: (currency: string) => string;
+  getExchangeRate: (fromCurrency: string, toCurrency: string) => Promise<number>;
+  convertToBaseCurrency: (amount: number, fromCurrency: string) => Promise<{ baseAmount: number; exchangeRate: number }>;
+  loadSettings: () => Promise<void>;
+  updateBaseCurrency: (currency: string) => Promise<void>;
+  updateCountry: (country: string) => Promise<void>;
+  isLoading: boolean;
+  isUKBusiness: boolean;
+}
 
-const currencySymbols: Record<string, string> = {
+
+
+const CURRENCY_SYMBOLS: Record<string, string> = {
   USD: '$',
   EUR: '€',
   GBP: '£',
   JPY: '¥',
+  INR: '₹',
+  PKR: 'Rs',
   AUD: 'A$',
   CAD: 'C$',
   CHF: 'Fr',
   CNY: '¥',
-  INR: '₹',
+  AED: 'د.إ',
+  SAR: 'ر.س',
+  BDT: '৳',
+  EGP: 'E£',
+  IDR: 'Rp',
   KRW: '₩',
   MXN: '$',
-  NOK: 'kr',
+  NGN: '₦',
   NZD: 'NZ$',
-  SEK: 'kr',
-  SGD: 'S$',
-  TRY: '₺',
-  ZAR: 'R',
-  BRL: 'R$',
+  PHP: '₱',
   RUB: '₽',
+  SGD: 'S$',
+  THB: '฿',
+  TRY: '₺',
+  VND: '₫',
+  ZAR: 'R',
 };
 
-export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [currency, setCurrencyState] = useState('USD');
-  const [theme, setThemeState] = useState<'light' | 'dark'>('light');
-  const [notifications, setNotificationsState] = useState(true);
-  const [biometrics, setBiometricsState] = useState(false);
+const DEFAULT_CURRENCIES = ['USD', 'EUR', 'GBP', 'PKR', 'INR'];
 
-  // Load settings from storage
+const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
+
+export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
+  const [settings, setSettings] = useState<UserSettings | null>(null);
+  const [baseCurrency, setBaseCurrency] = useState('USD');
+  const [userCountry, setUserCountry] = useState('US');
+  const [enabledCurrencies, setEnabledCurrencies] = useState<string[]>(DEFAULT_CURRENCIES);
+  const [taxRates, setTaxRates] = useState<Record<string, number>>({});
+  const [isLoading, setIsLoading] = useState(true);
+
   useEffect(() => {
-    loadSettings();
-  }, []);
+    if (user) {
+      loadSettings();
+    }
+  }, [user]);
 
   const loadSettings = async () => {
-    try {
-      const [savedCurrency, savedTheme, savedNotifications, savedBiometrics] = await Promise.all([
-        AsyncStorage.getItem(STORAGE_KEYS.CURRENCY),
-        AsyncStorage.getItem(STORAGE_KEYS.THEME),
-        AsyncStorage.getItem(STORAGE_KEYS.NOTIFICATIONS),
-        AsyncStorage.getItem(STORAGE_KEYS.BIOMETRICS),
-      ]);
-
-      if (savedCurrency) setCurrencyState(savedCurrency);
-      if (savedTheme) setThemeState(savedTheme as 'light' | 'dark');
-      if (savedNotifications !== null) setNotificationsState(savedNotifications === 'true');
-      if (savedBiometrics !== null) setBiometricsState(savedBiometrics === 'true');
-    } catch (error) {
-      console.error('Error loading settings:', error);
-    }
-  };
-
-  const setCurrency = async (newCurrency: string) => {
-    try {
-      await AsyncStorage.setItem(STORAGE_KEYS.CURRENCY, newCurrency);
-      setCurrencyState(newCurrency);
-    } catch (error) {
-      console.error('Error saving currency:', error);
-    }
-  };
-
-  const setTheme = async (newTheme: 'light' | 'dark') => {
-    try {
-      await AsyncStorage.setItem(STORAGE_KEYS.THEME, newTheme);
-      setThemeState(newTheme);
-    } catch (error) {
-      console.error('Error saving theme:', error);
-    }
-  };
-
-  const setNotifications = async (enabled: boolean) => {
-    try {
-      await AsyncStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, enabled.toString());
-      setNotificationsState(enabled);
-    } catch (error) {
-      console.error('Error saving notifications setting:', error);
-    }
-  };
-
-  const setBiometrics = async (enabled: boolean) => {
-    try {
-      await AsyncStorage.setItem(STORAGE_KEYS.BIOMETRICS, enabled.toString());
-      setBiometricsState(enabled);
-    } catch (error) {
-      console.error('Error saving biometrics setting:', error);
-    }
-  };
-
-  const formatCurrency = useCallback((amount: number | undefined | null): string => {
-    // Handle undefined or null amounts
-    if (amount === undefined || amount === null || isNaN(amount)) {
-      return `${currencySymbols[currency] || '$'}0.00`;
-    }
+    if (!user) return;
     
     try {
-      const symbol = currencySymbols[currency] || '$';
+      setIsLoading(true);
       
-      // Handle different currency formatting
-      switch (currency) {
-        case 'JPY':
-        case 'KRW':
-          // No decimal places for these currencies
-          return `${symbol}${Math.round(amount).toLocaleString('en-US')}`;
+      const { data, error } = await supabase
+        .from('user_settings')
+        .select('*')
+        .eq('user_id', user.id)
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error loading settings:', error);
+      }
+
+              if (data) {
+          setSettings(data);
+          setBaseCurrency(data.base_currency || 'USD');
+          setUserCountry(data.country || 'US');
+          setEnabledCurrencies(data.enabled_currencies || DEFAULT_CURRENCIES);
+          
+          // Fetch tax rates from separate table
+          const { data: taxRatesData } = await supabase
+            .from('tax_rates')
+            .select('*')
+            .eq('user_id', user.id);
+          
+          if (taxRatesData) {
+            const taxRatesObj: Record<string, number> = {};
+            taxRatesData.forEach(rate => {
+              taxRatesObj[rate.name] = parseFloat(rate.rate);
+            });
+            setTaxRates(taxRatesObj);
+            await AsyncStorage.setItem('@tax_rates', JSON.stringify(taxRatesObj));
+          } else {
+            setTaxRates({});
+          }
         
-        case 'EUR':
-          // European format: 1.234,56 €
-          return `${amount.toLocaleString('de-DE', {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          })} ${symbol}`;
+        // Cache everything
+        await AsyncStorage.setItem('@user_settings', JSON.stringify(data));
+        await AsyncStorage.setItem('@enabled_currencies', JSON.stringify(data.enabled_currencies || DEFAULT_CURRENCIES));
+        await AsyncStorage.setItem('@tax_rates', JSON.stringify(data.tax_rates || {}));
+      } else {
+        // Create default settings that match web app structure
+        const defaultSettings = {
+          user_id: user.id,
+          base_currency: 'USD',
+          country: 'US',
+          enabled_currencies: DEFAULT_CURRENCIES,
+          tax_rates: {},
+          date_format: 'MM/DD/YYYY',
+          fiscal_year_start: '01-01'
+        };
         
-        default:
-          // Default format: $1,234.56
-          return `${symbol}${amount.toLocaleString('en-US', {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          })}`;
+        const { data: newSettings } = await supabase
+          .from('user_settings')
+          .insert(defaultSettings)
+          .select()
+          .single();
+          
+        if (newSettings) {
+          setSettings(newSettings);
+          setBaseCurrency(newSettings.base_currency);
+          setUserCountry(newSettings.country || 'US');
+          setEnabledCurrencies(newSettings.enabled_currencies || DEFAULT_CURRENCIES);
+          setTaxRates(newSettings.tax_rates || {});
+          await AsyncStorage.setItem('@user_settings', JSON.stringify(newSettings));
+        }
       }
     } catch (error) {
-      console.error('Error formatting currency:', error);
-      return `${currencySymbols[currency] || '$'}${amount}`;
+      console.error('Error in loadSettings:', error);
+      // Try cache
+      try {
+        const cached = await AsyncStorage.getItem('@user_settings');
+        if (cached) {
+          const parsedSettings = JSON.parse(cached);
+          setSettings(parsedSettings);
+          setBaseCurrency(parsedSettings.base_currency || 'USD');
+          setUserCountry(parsedSettings.country || 'US');
+          setEnabledCurrencies(parsedSettings.enabled_currencies || DEFAULT_CURRENCIES);
+          setTaxRates(parsedSettings.tax_rates || {});
+        }
+      } catch (cacheError) {
+        console.error('Cache error:', cacheError);
+        setBaseCurrency('USD');
+        setUserCountry('US');
+        setEnabledCurrencies(DEFAULT_CURRENCIES);
+      }
+    } finally {
+      setIsLoading(false);
     }
-  }, [currency]);
+  };
 
-  const currencySymbol = currencySymbols[currency] || '$';
+  const updateBaseCurrency = async (currency: string) => {
+    if (!user) return;
+
+    try {
+      const { error } = await supabase
+        .from('user_settings')
+        .update({ base_currency: currency })
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+
+      setBaseCurrency(currency);
+      if (settings) {
+        const updated = { ...settings, base_currency: currency };
+        setSettings(updated);
+        await AsyncStorage.setItem('@user_settings', JSON.stringify(updated));
+      }
+    } catch (error) {
+      console.error('Error updating currency:', error);
+      throw error;
+    }
+  };
+
+  const updateCountry = async (country: string) => {
+    if (!user) return;
+
+    try {
+      const { error } = await supabase
+        .from('user_settings')
+        .update({ country })
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+
+      setUserCountry(country);
+      if (settings) {
+        const updated = { ...settings, country };
+        setSettings(updated);
+        await AsyncStorage.setItem('@user_settings', JSON.stringify(updated));
+      }
+    } catch (error) {
+      console.error('Error updating country:', error);
+      throw error;
+    }
+  };
+
+  const getExchangeRate = async (fromCurrency: string, toCurrency: string): Promise<number> => {
+  if (fromCurrency === toCurrency) return 1;
+
+  try {
+    // Check exchange_rates table first (this is what your web app uses)
+    const { data: rateData, error } = await supabase
+      .from('exchange_rates')
+      .select('rate')
+      .eq('from_currency', fromCurrency)
+      .eq('to_currency', toCurrency)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (rateData && !error) {
+      return parseFloat(rateData.rate);
+    }
+
+    // If no direct rate, try inverse
+    const { data: inverseRate } = await supabase
+      .from('exchange_rates')
+      .select('rate')
+      .eq('from_currency', toCurrency)
+      .eq('to_currency', fromCurrency)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (inverseRate) {
+      return 1 / parseFloat(inverseRate.rate);
+    }
+
+    // Cache the rate
+    const cacheKey = `@exchange_rate_${fromCurrency}_${toCurrency}`;
+    const cached = await AsyncStorage.getItem(cacheKey);
+    if (cached) {
+      const { rate } = JSON.parse(cached);
+      return rate;
+    }
+
+    return 1;
+  } catch (error) {
+    console.error('Error fetching exchange rate:', error);
+    return 1;
+  }
+};
+
+  const convertToBaseCurrency = async (
+    amount: number, 
+    fromCurrency: string
+  ): Promise<{ baseAmount: number; exchangeRate: number }> => {
+    if (fromCurrency === baseCurrency) {
+      return { baseAmount: amount, exchangeRate: 1 };
+    }
+
+    const exchangeRate = await getExchangeRate(fromCurrency, baseCurrency);
+    const baseAmount = amount * exchangeRate;
+
+    return { baseAmount, exchangeRate };
+  };
+
+  const getCurrencySymbol = (currency: string): string => {
+    return CURRENCY_SYMBOLS[currency] || currency;
+  };
+
+  const formatCurrency = (
+    amount: number | undefined | null,
+    options?: CurrencyFormatOptions
+  ): string => {
+    if (amount === undefined || amount === null) {
+      amount = 0;
+    }
+
+    const currency = options?.currency || baseCurrency;
+    const symbol = getCurrencySymbol(currency);
+    const showCode = options?.showCode || false;
+    
+    const formatted = `${symbol}${amount.toFixed(2)}`;
+    return showCode ? `${formatted} ${currency}` : formatted;
+  };
+
+  const currencySymbol = getCurrencySymbol(baseCurrency);
+  const isUKBusiness = userCountry === 'UK' || userCountry === 'GB';
 
   return (
     <SettingsContext.Provider
       value={{
-        currency,
+        settings,
+        baseCurrency,
+        userCountry,
         currencySymbol,
-        theme,
-        notifications,
-        biometrics,
-        setCurrency,
-        setTheme,
-        setNotifications,
-        setBiometrics,
+        enabledCurrencies,
+        taxRates,
         formatCurrency,
+        getCurrencySymbol,
+        getExchangeRate,
+        convertToBaseCurrency,
+        loadSettings,
+        updateBaseCurrency,
+        updateCountry,
+        isLoading,
+        isUKBusiness,
       }}
     >
       {children}
@@ -172,7 +343,26 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
 export const useSettings = () => {
   const context = useContext(SettingsContext);
   if (!context) {
-    throw new Error('useSettings must be used within a SettingsProvider');
+    return {
+      settings: null,
+      baseCurrency: 'USD',
+      userCountry: 'US',
+      currencySymbol: '$',
+      enabledCurrencies: DEFAULT_CURRENCIES,
+      taxRates: {},
+      formatCurrency: (amount: number | undefined | null) => {
+        const val = amount || 0;
+        return `$${val.toFixed(2)}`;
+      },
+      getCurrencySymbol: (currency: string) => CURRENCY_SYMBOLS[currency] || currency,
+      getExchangeRate: async () => 1,
+      convertToBaseCurrency: async (amount: number) => ({ baseAmount: amount, exchangeRate: 1 }),
+      loadSettings: async () => {},
+      updateBaseCurrency: async () => {},
+      updateCountry: async () => {},
+      isLoading: false,
+      isUKBusiness: false,
+    };
   }
   return context;
 };

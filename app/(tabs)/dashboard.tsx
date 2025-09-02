@@ -11,10 +11,11 @@ import {
   Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import {  startOfMonth, endOfMonth } from 'date-fns';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Feather, Ionicons , MaterialIcons} from '@expo/vector-icons';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -79,7 +80,18 @@ const DynamicGreeting = ({ userName }: { userName: string }) => {
   return <Text style={styles.greeting}>{greeting}</Text>;
 };
 
-// Recent Transaction Component
+// Helper function to format large amounts
+const formatCompactCurrency = (amount: number) => {
+  const { formatCurrency } = useSettings();
+  
+  if (Math.abs(amount) >= 1000000) {
+    return `${formatCurrency(amount / 1000000)}M`;
+  } else if (Math.abs(amount) >= 100000) {
+    return `${formatCurrency(amount / 1000)}K`;
+  }
+  return formatCurrency(amount);
+};
+
 const RecentTransaction = ({ 
   item, 
   type,
@@ -89,24 +101,25 @@ const RecentTransaction = ({
   type: 'income' | 'expense';
   navigation: any;
 }) => {
-  const { formatCurrency } = useSettings();
+  const { formatCurrency, getCurrencySymbol, baseCurrency } = useSettings();
   const isIncome = type === 'income';
-  // Calculate total with tax
-  const displayAmount = item.amount + (item.tax_amount || 0);
+  // Show amount WITHOUT tax (like list pages)
+  const displayAmount = item.amount;
+  const isBaseCurrency = !item.currency || item.currency === baseCurrency;
   
   const handlePress = () => {
-  navigation.navigate('TransactionDetail', { 
-    transactionId: item.id, 
-    type: type 
-  });
-};
+    navigation.navigate('TransactionDetail', { 
+      transactionId: item.id, 
+      type: type 
+    });
+  };
 
-return (
-  <TouchableOpacity 
-    style={styles.transactionItem} 
-    activeOpacity={0.7}
-    onPress={handlePress}
-  >
+  return (
+    <TouchableOpacity 
+      style={styles.transactionItem} 
+      activeOpacity={0.7}
+      onPress={handlePress}
+    >
       <View style={styles.transactionLeft}>
         <View style={[
           styles.transactionIcon,
@@ -124,28 +137,38 @@ return (
           </Text>
           <Text style={styles.transactionDate}>
             {format(new Date(item.date), 'MMM dd, yyyy')}
+            {!isBaseCurrency && item.currency && ` • ${item.currency}`}
           </Text>
         </View>
       </View>
-      <Text style={[
-        styles.transactionAmount,
-        { color: isIncome ? Colors.light.success : Colors.light.text }
-      ]}>
-        {isIncome ? '+' : ''}{formatCurrency(displayAmount)}
-      </Text>
+      <View style={styles.transactionAmountContainer}>
+        <Text style={[
+          styles.transactionAmount,
+          { color: isIncome ? Colors.light.success : Colors.light.text }
+        ]}>
+          {isIncome ? '+' : ''}
+          {isBaseCurrency 
+            ? formatCurrency(displayAmount)
+            : `${getCurrencySymbol(item.currency)} ${displayAmount.toFixed(2)}`
+          }
+        </Text>
+        {!isBaseCurrency && item.currency && (
+          <Text style={styles.transactionCurrency}>{item.currency}</Text>
+        )}
+      </View>
     </TouchableOpacity>
   );
 };
 
 export default function DashboardScreen() {
   const { user } = useAuth();
-  const { formatCurrency } = useSettings();
+ const { formatCurrency, baseCurrency } = useSettings();    
   const navigation = useNavigation<DashboardNavigationProp>();
   const [refreshing, setRefreshing] = useState(false);
   const [showAIInsights, setShowAIInsights] = useState(false);
   const [notificationCount, setNotificationCount] = useState(0);
   const [isOffline, setIsOffline] = useState(false);
-
+  const queryClient = useQueryClient();
   // Check network status
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(state => {
@@ -188,16 +211,16 @@ export default function DashboardScreen() {
   });
 
   const { data: recentIncomes } = useQuery({
-    queryKey: ['recent-incomes', user?.id],
-    queryFn: () => getIncomes(user!.id, 3),
-    enabled: !!user,
-  });
+  queryKey: ['recent-incomes', user?.id],
+  queryFn: () => getIncomes(user!.id, 100), // Changed from 3 to 100
+      enabled: !!user,
+    });
 
-  const { data: recentExpenses } = useQuery({
-    queryKey: ['recent-expenses', user?.id],
-    queryFn: () => getExpenses(user!.id, 3),
-    enabled: !!user,
-  });
+    const { data: recentExpenses } = useQuery({
+      queryKey: ['recent-expenses', user?.id],
+      queryFn: () => getExpenses(user!.id, 100), // Changed from 3 to 100
+      enabled: !!user,
+    });
 
   const { data: notifications } = useQuery({
     queryKey: ['notifications', user?.id],
@@ -234,10 +257,49 @@ const handleOpenInsights = async () => {
     }
   }, [notifications]);
 
+  // Calculate current month totals using base_amount
+    const currentDate = new Date();
+    const monthStart = startOfMonth(currentDate);
+    const monthEnd = endOfMonth(currentDate);
+
+    // Filter for current month only
+    const currentMonthIncomes = recentIncomes?.filter((income: any) => {
+      const incomeDate = new Date(income.date);
+      return incomeDate >= monthStart && incomeDate <= monthEnd;
+    }) || [];
+
+    const currentMonthExpenses = recentExpenses?.filter((expense: any) => {
+      const expenseDate = new Date(expense.date);
+      return expenseDate >= monthStart && expenseDate <= monthEnd;
+    }) || [];
+
+    // Calculate totals using base_amount (like your web app)
+    const calculatedTotalIncome = currentMonthIncomes.reduce((sum: number, income: any) => {
+      return sum + (income.base_amount || income.amount || 0);
+    }, 0);
+
+    const calculatedTotalExpenses = currentMonthExpenses.reduce((sum: number, expense: any) => {
+      return sum + (expense.base_amount || expense.amount || 0);
+    }, 0);
+
+    const calculatedNetProfit = calculatedTotalIncome - calculatedTotalExpenses;
+
   const onRefresh = async () => {
     setRefreshing(true);
-    await refetch();
-    setRefreshing(false);
+    try {
+      // Refetch all queries in parallel
+      await Promise.all([
+        refetch(),
+        queryClient.invalidateQueries({ queryKey: ['recent-incomes', user?.id] }),
+        queryClient.invalidateQueries({ queryKey: ['recent-expenses', user?.id] }),
+        queryClient.invalidateQueries({ queryKey: ['notifications', user?.id] }),
+        queryClient.invalidateQueries({ queryKey: ['profile', user?.id] }),
+      ]);
+    } catch (error) {
+      console.error('Error refreshing dashboard:', error);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   // Combine and sort recent transactions
@@ -256,7 +318,7 @@ const handleOpenInsights = async () => {
     );
   }
 
-  const netProfit = (dashboardData?.totalIncome || 0) - (dashboardData?.totalExpenses || 0);
+  const netProfit = calculatedNetProfit;
   const userName = profile?.full_name?.split(' ')[0] || profile?.first_name || 'there';
 
   return (
@@ -350,48 +412,74 @@ const handleOpenInsights = async () => {
           </LinearGradient>
         </TouchableOpacity>
 
-        {/* Monthly Overview Card */}
-        <LinearGradient
-          colors={['#4F46E5', '#7C3AED'] as const}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.overviewCard}
-        >
-          <View style={styles.overviewPattern}>
-            <Text style={styles.overviewTitle}>Monthly Overview</Text>
-            <Text style={styles.overviewLabel}>Net Profit</Text>
-            <Text style={[
-              styles.overviewValue,
-              { color: netProfit >= 0 ? '#FFFFFF' : '#FCA5A5' }
-            ]}>
-              {netProfit >= 0 ? '' : '-'}{formatCurrency(Math.abs(netProfit))}
-            </Text>
-            
-            <View style={styles.overviewStatsContainer}>
-              <View style={styles.overviewStat}>
-                <Feather name="trending-up" size={18} color="#10B981" />
-                <Text style={styles.overviewStatLabel}>Income</Text>
-                <Text style={styles.overviewStatValue}>
-                  {formatCurrency(dashboardData?.totalIncome || 0)}
-                </Text>
+                {/* Monthly Overview Card */}
+              <LinearGradient
+                colors={['#4F46E5', '#7C3AED'] as const}
+                 start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.overviewCard}
+                >
+                <View style={styles.overviewPattern}>
+                  <Text style={styles.overviewTitle}>Monthly Overview</Text>
+                  <Text style={styles.overviewLabel}>Net Profit ({baseCurrency})</Text>
+                  <Text style={[
+                    styles.overviewValue,
+                    { 
+                      color: netProfit >= 0 ? '#FFFFFF' : '#FCA5A5',
+                      fontSize: Math.abs(netProfit) >= 1000000 ? 28 : 36
+                    }
+                  ]}>
+                    {netProfit >= 0 ? '' : '-'}
+                    {Math.abs(netProfit) >= 1000000 
+                      ? `${formatCurrency(Math.abs(netProfit) / 1000000)}M`
+                      : Math.abs(netProfit) >= 100000
+                      ? `${formatCurrency(Math.abs(netProfit) / 1000)}K`
+                      : formatCurrency(Math.abs(netProfit))
+                    }
+                  </Text>
+                              
+                  <View style={styles.overviewStatsContainer}>
+                    <View style={styles.overviewStat}>
+                      <Feather name="trending-up" size={18} color="#10B981" />
+                      <Text style={styles.overviewStatLabel}>Income</Text>
+                      <Text style={[
+                styles.overviewStatValue,
+                { fontSize: calculatedTotalIncome >= 1000000 ? 14 : 16 }
+              ]}>
+                {Math.abs(calculatedTotalIncome) >= 1000000 
+                  ? `${formatCurrency(calculatedTotalIncome / 1000000)}M`
+                  : Math.abs(calculatedTotalIncome) >= 100000
+                  ? `${formatCurrency(calculatedTotalIncome / 1000)}K`
+                  : formatCurrency(calculatedTotalIncome)
+                }
+              </Text>
+                    </View>
+                    
+                    <View style={styles.overviewDivider} />
+      
+                  <View style={styles.overviewStat}>
+                    <Feather name="trending-down" size={18} color="#EF4444" />
+                    <Text style={styles.overviewStatLabel}>Expenses</Text>
+                    <Text style={[
+                      styles.overviewStatValue,
+                      { fontSize: calculatedTotalExpenses >= 1000000 ? 14 : 16 }
+                    ]}>
+                      {Math.abs(calculatedTotalExpenses) >= 1000000 
+                        ? `${formatCurrency(calculatedTotalExpenses / 1000000)}M`
+                        : Math.abs(calculatedTotalExpenses) >= 100000
+                        ? `${formatCurrency(calculatedTotalExpenses / 1000)}K`
+                        : formatCurrency(calculatedTotalExpenses)
+                      }
+                    </Text>
+                  </View>
+                </View>
               </View>
-              
-              <View style={styles.overviewDivider} />
-              
-              <View style={styles.overviewStat}>
-                <Feather name="trending-down" size={18} color="#EF4444" />
-                <Text style={styles.overviewStatLabel}>Expenses</Text>
-                <Text style={styles.overviewStatValue}>
-                  {formatCurrency(dashboardData?.totalExpenses || 0)}
-                </Text>
-              </View>
-            </View>
-          </View>
-        </LinearGradient>
+            </LinearGradient>
 
-        {/* Metrics Grid - Updated Design */}
+            {/* Metrics Grid - Updated Design */}
         <View style={styles.metricsGrid}>
           <View style={styles.metricRow}>
+            {/* Income Card - FIXED */}
             <TouchableOpacity style={[styles.metricCard, styles.incomeCard]} activeOpacity={0.7}>
               <View style={styles.metricHeader}>
                 <Feather name="trending-up" size={20} color="#10B981" />
@@ -401,478 +489,522 @@ const handleOpenInsights = async () => {
                 </View>
               </View>
               <Text style={styles.metricTitle}>Income</Text>
-              <Text style={styles.metricValue}>{formatCurrency(dashboardData?.totalIncome || 0)}</Text>
+              <Text style={[
+                styles.metricValue,
+                { fontSize: calculatedTotalIncome >= 1000000 ? 16 : 20 }
+              ]}>
+                {Math.abs(calculatedTotalIncome) >= 1000000 
+                  ? `${formatCurrency(calculatedTotalIncome / 1000000)}M`
+                  : Math.abs(calculatedTotalIncome) >= 100000
+                  ? `${formatCurrency(calculatedTotalIncome / 1000)}K`
+                  : formatCurrency(calculatedTotalIncome)
+                }
+              </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.metricCard, styles.expenseCard]} activeOpacity={0.7}>
-              <View style={styles.metricHeader}>
-                <Feather name="trending-down" size={20} color="#EF4444" />
-                <View style={styles.trendBadge}>
-                  <Feather name="trending-down" size={12} color="#EF4444" />
-                  <Text style={[styles.trendValue, { color: '#EF4444' }]}>5%</Text>
-                </View>
-              </View>
-              <Text style={styles.metricTitle}>Expenses</Text>
-              <Text style={styles.metricValue}>{formatCurrency(dashboardData?.totalExpenses || 0)}</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.metricRow}>
-            <TouchableOpacity style={[styles.metricCard, styles.pendingCard]} activeOpacity={0.7}>
-              <View style={styles.metricHeader}>
-                <Feather name="clock" size={20} color="#F59E0B" />
-              </View>
-              <Text style={styles.metricTitle}>Pending</Text>
-              <Text style={styles.metricValue}>{formatCurrency(dashboardData?.pendingInvoices || 0)}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={[styles.metricCard, styles.invoiceCard]} activeOpacity={0.7}>
-              <View style={styles.metricHeader}>
-                <Feather name="file-text" size={20} color="#6366F1" />
-              </View>
-              <Text style={styles.metricTitle}>Invoices</Text>
-              <Text style={styles.metricValue}>{dashboardData?.invoiceCount || 0}</Text>
-            </TouchableOpacity>
-          </View>
+    {/* Expense Card - FIXED */}
+    <TouchableOpacity style={[styles.metricCard, styles.expenseCard]} activeOpacity={0.7}>
+      <View style={styles.metricHeader}>
+        <Feather name="trending-down" size={20} color="#EF4444" />
+        <View style={styles.trendBadge}>
+          <Feather name="trending-down" size={12} color="#EF4444" />
+          <Text style={[styles.trendValue, { color: '#EF4444' }]}>5%</Text>
         </View>
-
-
-{/* Recent Transactions */}
-<View style={styles.recentSection}>
-  <View style={styles.sectionHeader}>
-    <Text style={styles.sectionTitle}>Recent Transactions</Text>
-    <TouchableOpacity
-  onPress={() => {
-    if (recentTransactions.length > 0) {
-      const firstTransaction = recentTransactions[0];
-      navigation.navigate(firstTransaction.type === 'income' ? 'Income' : 'Expenses');
-    }
-  }}
->
-  {/* <Text style={styles.seeAllText}>See all</Text> */}
-</TouchableOpacity>
-  </View>
-  
-  <View style={styles.transactionsList}>
-    {recentTransactions.length > 0 ? (
-      recentTransactions.map((item) => (
-        <RecentTransaction 
-          key={item.id} 
-          item={item} 
-          type={item.type as 'income' | 'expense'} 
-          navigation={navigation}
-        />
-      ))
-    ) : (
-      <View style={styles.emptyTransactions}>
-        <Text style={styles.emptyText}>No transactions yet</Text>
-        <Text style={styles.emptySubtext}>
-          Add your first income or expense to get started
-        </Text>
       </View>
-    )}
+      <Text style={styles.metricTitle}>Expenses</Text>
+      <Text style={[
+        styles.metricValue,
+        { fontSize: calculatedTotalExpenses >= 1000000 ? 16 : 20 }
+      ]}>
+        {Math.abs(calculatedTotalExpenses) >= 1000000 
+          ? `${formatCurrency(calculatedTotalExpenses / 1000000)}M`
+          : Math.abs(calculatedTotalExpenses) >= 100000
+          ? `${formatCurrency(calculatedTotalExpenses / 1000)}K`
+          : formatCurrency(calculatedTotalExpenses)
+        }
+      </Text>
+    </TouchableOpacity>
+  </View>
+
+  <View style={styles.metricRow}>
+    {/* Pending Card - Keep as is */}
+    <TouchableOpacity style={[styles.metricCard, styles.pendingCard]} activeOpacity={0.7}>
+      <View style={styles.metricHeader}>
+        <Feather name="clock" size={20} color="#F59E0B" />
+      </View>
+      <Text style={styles.metricTitle}>Pending</Text>
+      <Text style={[
+        styles.metricValue,
+        { fontSize: (dashboardData?.pendingInvoices || 0) >= 1000000 ? 16 : 20 }
+      ]}>
+        {Math.abs(dashboardData?.pendingInvoices || 0) >= 1000000 
+          ? `${formatCurrency((dashboardData?.pendingInvoices || 0) / 1000000)}M`
+          : Math.abs(dashboardData?.pendingInvoices || 0) >= 100000
+          ? `${formatCurrency((dashboardData?.pendingInvoices || 0) / 1000)}K`
+          : formatCurrency(dashboardData?.pendingInvoices || 0)
+        }
+      </Text>
+    </TouchableOpacity>
+
+    {/* Invoice Card - COMPLETELY FIXED */}
+    <TouchableOpacity style={[styles.metricCard, styles.invoiceCard]} activeOpacity={0.7}>
+      <View style={styles.metricHeader}>
+        <Feather name="file-text" size={20} color="#6366F1" />
+      </View>
+      <Text style={styles.metricTitle}>Invoices</Text>
+      <Text style={styles.metricValue}>
+        {dashboardData?.invoiceCount || 0}
+      </Text>
+    </TouchableOpacity>
   </View>
 </View>
+
+
+              {/* Recent Transactions */}
+              <View style={styles.recentSection}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Recent Transactions</Text>
+                  <TouchableOpacity
+                onPress={() => {
+                  if (recentTransactions.length > 0) {
+                    const firstTransaction = recentTransactions[0];
+                    navigation.navigate(firstTransaction.type === 'income' ? 'Income' : 'Expenses');
+                  }
+                }}
+              >
+                {/* <Text style={styles.seeAllText}>See all</Text> */}
+              </TouchableOpacity>
+                </View>
+                
+                <View style={styles.transactionsList}>
+                  {recentTransactions.length > 0 ? (
+                    recentTransactions.map((item) => (
+                      <RecentTransaction 
+                        key={item.id} 
+                        item={item} 
+                        type={item.type as 'income' | 'expense'} 
+                        navigation={navigation}
+                      />
+                    ))
+                  ) : (
+                    <View style={styles.emptyTransactions}>
+                      <Text style={styles.emptyText}>No transactions yet</Text>
+                      <Text style={styles.emptySubtext}>
+                        Add your first income or expense to get started
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
         
-        {/* Bottom padding */}
-        <View style={{ height: 100 }} />
-      </ScrollView>
+            {/* Bottom padding */}
+            <View style={{ height: 100 }} />
+          </ScrollView>
 
-      {/* AI Insights Modal */}
-     <AIInsightsModal
-  visible={showAIInsights}
-  onClose={() => setShowAIInsights(false)}
-  insights={aiInsights || []}
-  loading={aiLoading}
-  onRefresh={handleRefreshInsights}
-/>
-    </SafeAreaView>
-  );
-}
+          {/* AI Insights Modal */}
+        <AIInsightsModal
+      visible={showAIInsights}
+      onClose={() => setShowAIInsights(false)}
+      insights={aiInsights || []}
+      loading={aiLoading}
+      onRefresh={handleRefreshInsights}
+    />
+        </SafeAreaView>
+      );
+    }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8F9FA',
-  },
-  quickActions: {
-  paddingHorizontal: Spacing.lg,
-  marginBottom: Spacing.lg,
-},
-quickActionsGrid: {
-  flexDirection: 'row',
-  flexWrap: 'wrap',
-  gap: Spacing.sm,
-  marginTop: Spacing.sm,
-},
-quickActionCard: {
-  width: (width - Spacing.lg * 2 - Spacing.sm * 3) / 4,
-  aspectRatio: 1,
-  borderRadius: BorderRadius.lg,
-  overflow: 'hidden',
-},
-quickActionGradient: {
-  flex: 1,
-  justifyContent: 'center',
-  alignItems: 'center',
-  padding: Spacing.sm,
-},
-quickActionText: {
-  fontSize: 11,
-  fontWeight: '500',
-  color: Colors.light.text,
-  marginTop: 4,
-  textAlign: 'center',
-},
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  scrollContent: {
-    paddingTop: Spacing.md, // Added margin on top
-  },
-  offlineBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F59E0B',
-    paddingVertical: Spacing.sm,
-    gap: Spacing.sm,
-  },
-  offlineText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    marginBottom: Spacing.lg,
-  },
-  headerLeft: {
-    flex: 1,
-  },
-  headerRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  greeting: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: Colors.light.text,
-    marginBottom: 4,
-    marginTop: 10,
-  },
-  date: {
-    fontSize: 14,
-    color: Colors.light.textSecondary,
-  },
-  notificationButton: {
-    width: 42,
-    height: 42,
-    borderRadius: BorderRadius.full,
-    backgroundColor: Colors.light.background,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  notificationBadge: {
-    position: 'absolute',
-    top: -2,
-    right: -2,
-    backgroundColor: '#EF4444',
-    borderRadius: BorderRadius.full,
-    minWidth: 18,
-    height: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: Colors.light.background,
-  },
-  notificationBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  profileButton: {
-    width: 42,
-    height: 42,
-    borderRadius: BorderRadius.full,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-    backgroundColor: Colors.light.background,
-  },
-  profileImage: {
-    width: '100%',
-    height: '100%',
-  },
-  profileGradient: {
-    width: '100%',
-    height: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  profileInitial: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  
-  // AI Card
-  aiCard: {
-    marginHorizontal: Spacing.lg,
-    marginBottom: Spacing.lg,
-    padding: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    shadowColor: '#3B82F6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 5,
-  },
-  aiCardContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  aiCardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    flex: 1,
-  },
-  aiCardText: {
-    flex: 1,
-  },
-  aiCardTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 2,
-  },
-  aiCardSubtitle: {
-    fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.8)',
-  },
-  checkNowButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 8,
-    borderRadius: BorderRadius.full,
-    gap: 4,
-  },
-  checkNowText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#3B82F6',
-  },
-  
-  // Overview Card
-  overviewCard: {
-    marginHorizontal: Spacing.lg,
-    marginBottom: Spacing.lg,
-    borderRadius: 20,
-    overflow: 'hidden',
-    shadowColor: '#4F46E5',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  overviewPattern: {
-    padding: Spacing.lg,
-  },
-  overviewTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: 'rgba(255, 255, 255, 0.9)',
-    marginBottom: Spacing.sm,
-  },
-  overviewLabel: {
-    fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.7)',
-    marginBottom: 4,
-  },
-  overviewValue: {
-    fontSize: 36,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: Spacing.md,
-  },
-  overviewStatsContainer: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-  },
-  overviewStat: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  overviewStatLabel: {
-    fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.8)',
-    marginTop: 4,
-    marginBottom: 2,
-  },
-  overviewStatValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  overviewDivider: {
-    width: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    marginHorizontal: Spacing.md,
-  },
-  
-  // Metrics
-  metricsGrid: {
-    paddingHorizontal: Spacing.lg,
-    marginBottom: Spacing.lg,
-  },
-  metricRow: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    marginBottom: Spacing.md,
-  },
-  metricCard: {
-    flex: 1,
-    padding: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    height: 100,
-  },
-  incomeCard: {
-    backgroundColor: '#D1FAE5',
-  },
-  expenseCard: {
-    backgroundColor: '#FEE2E2',
-  },
-  pendingCard: {
-    backgroundColor: '#FEF3C7',
-  },
-  invoiceCard: {
-    backgroundColor: '#E0E7FF',
-  },
-  metricHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: Spacing.xs,
-  },
-  trendBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
-  trendValue: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  metricTitle: {
-    fontSize: 13,
-    color: Colors.light.textSecondary,
-    marginBottom: 4,
-  },
-  metricValue: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: Colors.light.text,
-  },
-  
-  // Recent Transactions
-  recentSection: {
-    paddingHorizontal: Spacing.lg,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: Spacing.md,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: Colors.light.text,
-  },
-  seeAllText: {
-    fontSize: 14,
-    color: Colors.light.primary,
-  },
-  transactionsList: {
-    backgroundColor: Colors.light.background,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.xs,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  transactionItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: Spacing.md,
-    borderRadius: BorderRadius.md,
-  },
-  transactionLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  transactionIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: BorderRadius.md,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: Spacing.md,
-  },
-  transactionDetails: {
-    flex: 1,
-  },
-  transactionDescription: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: Colors.light.text,
-    marginBottom: 2,
-  },
-  transactionDate: {
-    fontSize: 12,
-    color: Colors.light.textTertiary,
-  },
-  transactionAmount: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  emptyTransactions: {
-    padding: Spacing.xl,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 16,
-    color: Colors.light.textSecondary,
-    marginBottom: 4,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: Colors.light.textTertiary,
-    textAlign: 'center',
-  },
-});
- 
+    const styles = StyleSheet.create({
+      container: {
+        flex: 1,
+        backgroundColor: '#F8F9FA',
+      },
+      quickActions: {
+      paddingHorizontal: Spacing.lg,
+      marginBottom: Spacing.lg,
+    },
+    transactionAmountContainer: {
+      alignItems: 'flex-end',
+    },
+    transactionCurrency: {
+      fontSize: 10,
+      color: Colors.light.textSecondary,
+      fontWeight: '600',
+      marginTop: 2,
+    },
+    quickActionsGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: Spacing.sm,
+      marginTop: Spacing.sm,
+    },
+    quickActionCard: {
+      width: (width - Spacing.lg * 2 - Spacing.sm * 3) / 4,
+      aspectRatio: 1,
+      borderRadius: BorderRadius.lg,
+      overflow: 'hidden',
+    },
+    quickActionGradient: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: Spacing.sm,
+    },
+    quickActionText: {
+      fontSize: 11,
+      fontWeight: '500',
+      color: Colors.light.text,
+      marginTop: 4,
+      textAlign: 'center',
+    },
+      loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+      },
+      scrollContent: {
+        paddingTop: Spacing.md, // Added margin on top
+      },
+      offlineBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#F59E0B',
+        paddingVertical: Spacing.sm,
+        gap: Spacing.sm,
+      },
+      offlineText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '500',
+      },
+      header: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: Spacing.lg,
+        marginBottom: Spacing.lg,
+      },
+      headerLeft: {
+        flex: 1,
+      },
+      headerRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+      },
+      greeting: {
+        fontSize: 24,
+        fontWeight: '700',
+        color: Colors.light.text,
+        marginBottom: 4,
+        marginTop: 10,
+      },
+      date: {
+        fontSize: 14,
+        color: Colors.light.textSecondary,
+      },
+      notificationButton: {
+        width: 42,
+        height: 42,
+        borderRadius: BorderRadius.full,
+        backgroundColor: Colors.light.background,
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+        elevation: 3,
+      },
+      notificationBadge: {
+        position: 'absolute',
+        top: -2,
+        right: -2,
+        backgroundColor: '#EF4444',
+        borderRadius: BorderRadius.full,
+        minWidth: 18,
+        height: 18,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: Colors.light.background,
+      },
+      notificationBadgeText: {
+        color: '#FFFFFF',
+        fontSize: 10,
+        fontWeight: '700',
+      },
+      profileButton: {
+        width: 42,
+        height: 42,
+        borderRadius: BorderRadius.full,
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+        elevation: 3,
+        backgroundColor: Colors.light.background,
+      },
+      profileImage: {
+        width: '100%',
+        height: '100%',
+      },
+      profileGradient: {
+        width: '100%',
+        height: '100%',
+        justifyContent: 'center',
+        alignItems: 'center',
+      },
+      profileInitial: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: '700',
+      },
+      
+      // AI Card
+      aiCard: {
+        marginHorizontal: Spacing.lg,
+        marginBottom: Spacing.lg,
+        padding: Spacing.md,
+        borderRadius: BorderRadius.lg,
+        shadowColor: '#3B82F6',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+        elevation: 5,
+      },
+      aiCardContent: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+      },
+      aiCardLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.md,
+        flex: 1,
+      },
+      aiCardText: {
+        flex: 1,
+      },
+      aiCardTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#FFFFFF',
+        marginBottom: 2,
+      },
+      aiCardSubtitle: {
+        fontSize: 13,
+        color: 'rgba(255, 255, 255, 0.8)',
+      },
+      checkNowButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        paddingHorizontal: Spacing.md,
+        paddingVertical: 8,
+        borderRadius: BorderRadius.full,
+        gap: 4,
+      },
+      checkNowText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#3B82F6',
+      },
+      
+      // Overview Card
+      overviewCard: {
+        marginHorizontal: Spacing.lg,
+        marginBottom: Spacing.lg,
+        borderRadius: 20,
+        overflow: 'hidden',
+        shadowColor: '#4F46E5',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.2,
+        shadowRadius: 12,
+        elevation: 6,
+      },
+      overviewPattern: {
+        padding: Spacing.lg,
+      },
+      overviewTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: 'rgba(255, 255, 255, 0.9)',
+        marginBottom: Spacing.sm,
+      },
+      overviewLabel: {
+        fontSize: 13,
+        color: 'rgba(255, 255, 255, 0.7)',
+        marginBottom: 4,
+      },
+      overviewValue: {
+        fontSize: 36,
+        fontWeight: '700',
+        color: '#FFFFFF',
+        marginBottom: Spacing.md,
+      },
+      overviewStatsContainer: {
+        flexDirection: 'row',
+        backgroundColor: 'rgba(255, 255, 255, 0.15)',
+        borderRadius: BorderRadius.md,
+        padding: Spacing.md,
+      },
+      overviewStat: {
+        flex: 1,
+        alignItems: 'center',
+      },
+      overviewStatLabel: {
+        fontSize: 11,
+        color: 'rgba(255, 255, 255, 0.8)',
+        marginTop: 4,
+        marginBottom: 2,
+      },
+      overviewStatValue: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#FFFFFF',
+      },
+      overviewDivider: {
+        width: 1,
+        backgroundColor: 'rgba(255, 255, 255, 0.3)',
+        marginHorizontal: Spacing.md,
+      },
+      
+      // Metrics
+      metricsGrid: {
+        paddingHorizontal: Spacing.lg,
+        marginBottom: Spacing.lg,
+      },
+      metricRow: {
+        flexDirection: 'row',
+        gap: Spacing.md,
+        marginBottom: Spacing.md,
+      },
+      metricCard: {
+        flex: 1,
+        padding: Spacing.md,
+        borderRadius: BorderRadius.lg,
+        height: 100,
+      },
+      incomeCard: {
+        backgroundColor: '#D1FAE5',
+      },
+      expenseCard: {
+        backgroundColor: '#FEE2E2',
+      },
+      pendingCard: {
+        backgroundColor: '#FEF3C7',
+      },
+      invoiceCard: {
+        backgroundColor: '#E0E7FF',
+      },
+      metricHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Spacing.xs,
+      },
+      trendBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 2,
+      },
+      trendValue: {
+        fontSize: 11,
+        fontWeight: '600',
+      },
+      metricTitle: {
+        fontSize: 13,
+        color: Colors.light.textSecondary,
+        marginBottom: 4,
+      },
+      metricValue: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: Colors.light.text,
+      },
+      
+      // Recent Transactions
+      recentSection: {
+        paddingHorizontal: Spacing.lg,
+      },
+      sectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Spacing.md,
+      },
+      sectionTitle: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: Colors.light.text,
+      },
+      seeAllText: {
+        fontSize: 14,
+        color: Colors.light.primary,
+      },
+      transactionsList: {
+        backgroundColor: Colors.light.background,
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.xs,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        elevation: 2,
+      },
+      transactionItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: Spacing.md,
+        borderRadius: BorderRadius.md,
+      },
+      transactionLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+      },
+      transactionIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: BorderRadius.md,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: Spacing.md,
+      },
+      transactionDetails: {
+        flex: 1,
+      },
+      transactionDescription: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: Colors.light.text,
+        marginBottom: 2,
+      },
+      transactionDate: {
+        fontSize: 12,
+        color: Colors.light.textTertiary,
+      },
+      transactionAmount: {
+        fontSize: 15,
+        fontWeight: '600',
+      },
+      emptyTransactions: {
+        padding: Spacing.xl,
+        alignItems: 'center',
+      },
+      emptyText: {
+        fontSize: 16,
+        color: Colors.light.textSecondary,
+        marginBottom: 4,
+      },
+      emptySubtext: {
+        fontSize: 14,
+        color: Colors.light.textTertiary,
+        textAlign: 'center',
+      },
+    });
+    

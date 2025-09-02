@@ -499,56 +499,19 @@ export const createInvoice = async (invoice: any, items: any[], isRecurring = fa
   return invoiceData;
 };
 
-// src/services/api.ts - Update generateInvoiceNumber
-export const generateInvoiceNumber = async (userId: string) => {
+export const generateInvoiceNumber = async (userId: string): Promise<string> => {
   try {
-    // Get invoice settings
-    let { data: settings } = await supabase
-      .from('invoice_settings')
-      .select('invoice_prefix, next_number')
-      .eq('user_id', userId)
-      .single();
+    // Use the same RPC function as web app - this is atomic and safe
+    const { data, error } = await supabase
+      .rpc('get_next_invoice_number', { p_user_id: userId });
     
-    // If no settings exist, create default ones
-    if (!settings) {
-      const { data: newSettings, error } = await supabase
-        .from('invoice_settings')
-        .insert({
-          user_id: userId,
-          invoice_prefix: 'INV-',
-          next_number: 1,
-        })
-        .select()
-        .single();
-      
-      if (error) {
-        console.error('Error creating invoice settings:', error);
-        // Use defaults if creation fails
-        const prefix = 'INV-';
-        const nextNumber = 1;
-        const now = new Date();
-        const year = now.getFullYear();
-        const month = String(now.getMonth() + 1).padStart(2, '0');
-        return `${prefix}${year}${month}-${String(nextNumber).padStart(3, '0')}`;
-      }
-      
-      settings = newSettings;
-    }
+    if (error) throw error;
+    return data;
     
-    // Now settings is guaranteed to exist
-    const prefix = settings?.invoice_prefix || 'INV-';
-    const nextNumber = settings?.next_number || 1;
-    
-    // Format: INV-YYYYMM-001
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    
-    return `${prefix}${year}${month}-${String(nextNumber).padStart(3, '0')}`;
   } catch (error) {
     console.error('Error generating invoice number:', error);
-    // Fallback
-    return `INV-${Date.now().toString().slice(-6)}`;
+    // Fallback to timestamp-based number
+    return `INV-${Date.now()}`;
   }
 };
 

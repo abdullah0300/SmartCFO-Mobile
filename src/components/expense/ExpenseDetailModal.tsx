@@ -33,7 +33,7 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({
   onClose,
   onEdit,
 }) => {
-  const { formatCurrency } = useSettings();
+  const { formatCurrency, getCurrencySymbol, baseCurrency } = useSettings();
   const queryClient = useQueryClient();
 
   const deleteMutation = useMutation({
@@ -65,11 +65,13 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({
 
   if (!expense) return null;
   // Display values
-  const baseAmount = expense.amount;
-  const taxAmount = expense.tax_amount || 0;
-  const taxRate = expense.tax_rate || 0;
-  const totalAmount = baseAmount + taxAmount;
-  const hasTax = taxRate > 0;
+const baseAmount = expense.amount;
+const taxAmount = expense.tax_amount || 0;
+const taxRate = expense.tax_rate || 0;
+const totalAmount = baseAmount + taxAmount;
+const hasTax = taxRate > 0;
+const currency = expense.currency || 'USD';
+const isBaseCurrency = !expense.currency || expense.currency === baseCurrency;
 
   return (
     <Modal
@@ -94,20 +96,36 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({
               </View>
             )}
 
-            <View style={styles.amountSection}>
+                        <View style={styles.amountSection}>
               <Text style={styles.amountLabel}>Total Paid</Text>
-              <Text style={styles.amountValue}>{formatCurrency(totalAmount)}</Text>
+              <Text style={styles.amountValue}>
+                {getCurrencySymbol(currency)} {totalAmount.toFixed(2)}
+              </Text>
+              {currency && (
+                <Text style={styles.currencyCode}>{currency}</Text>
+              )}
+              
+              {/* Show conversion if not base currency */}
+              {!isBaseCurrency && expense.base_amount && (
+                <Text style={styles.conversionText}>
+                  ≈ {formatCurrency(expense.base_amount + (expense.base_amount * taxRate / 100))} base currency
+                </Text>
+              )}
               
               {/* Show breakdown if tax exists */}
               {hasTax && (
                 <View style={styles.amountBreakdown}>
                   <View style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>Base Amount:</Text>
-                    <Text style={styles.breakdownValue}>{formatCurrency(baseAmount)}</Text>
+                    <Text style={styles.breakdownValue}>
+                      {getCurrencySymbol(currency)} {baseAmount.toFixed(2)}
+                    </Text>
                   </View>
                   <View style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>Tax ({taxRate}%):</Text>
-                    <Text style={styles.breakdownValue}>{formatCurrency(taxAmount)}</Text>
+                    <Text style={styles.breakdownValue}>
+                      {getCurrencySymbol(currency)} {taxAmount.toFixed(2)}
+                    </Text>
                   </View>
                 </View>
               )}
@@ -123,6 +141,26 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({
                   </Text>
                 </View>
               </View>
+
+              {/* Currency */}
+                {currency && (
+                  <View style={styles.detailItem}>
+                    <Feather
+                      name="dollar-sign"
+                      size={20}
+                      color={Colors.light.textSecondary}
+                    />
+                    <View style={styles.detailText}>
+                      <Text style={styles.detailLabel}>Currency</Text>
+                      <Text style={styles.detailValue}>
+                        {currency}
+                        {expense.exchange_rate && expense.exchange_rate !== 1 && (
+                          <Text style={styles.exchangeRate}> (Rate: {expense.exchange_rate.toFixed(4)})</Text>
+                        )}
+                      </Text>
+                    </View>
+                  </View>
+                )}
 
               <View style={styles.detailItem}>
                 <Feather name="tag" size={20} color={Colors.light.textSecondary} />
@@ -190,6 +228,23 @@ const styles = StyleSheet.create({
     maxWidth: 400,
     maxHeight: '80%',
   },
+  currencyCode: {
+  fontSize: 14,
+  color: Colors.light.textSecondary,
+  fontWeight: '600',
+  marginTop: 2,
+},
+conversionText: {
+  fontSize: 12,
+  color: Colors.light.textSecondary,
+  marginTop: 4,
+  fontStyle: 'italic',
+},
+exchangeRate: {
+  fontSize: 12,
+  color: Colors.light.textSecondary,
+  fontWeight: '400',
+},
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

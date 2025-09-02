@@ -39,7 +39,7 @@ interface AddExpenseModalProps {
 
 export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ visible, onClose }) => {
   const { user } = useAuth();
-  const { currencySymbol } = useSettings();
+  const { currencySymbol, formatCurrency, baseCurrency, isUKBusiness, convertToBaseCurrency, getCurrencySymbol, enabledCurrencies, taxRates } = useSettings();
   const queryClient = useQueryClient();
   
   const [amount, setAmount] = useState('');
@@ -56,6 +56,25 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ visible, onClo
   
   const [taxRate, setTaxRate] = useState("0");
   const [includeTax, setIncludeTax] = useState(false);
+
+  const [currency, setCurrency] = useState(baseCurrency);
+const [showCurrencySelector, setShowCurrencySelector] = useState(false);
+const [convertedPreview, setConvertedPreview] = useState(0);
+const [availableCurrencies, setAvailableCurrencies] = useState<Array<{code: string, symbol: string, name: string}>>([]);
+
+const CURRENCY_NAMES: Record<string, string> = {
+  USD: 'US Dollar',
+  EUR: 'Euro',
+  GBP: 'British Pound',
+  PKR: 'Pakistani Rupee',
+  INR: 'Indian Rupee',
+  AUD: 'Australian Dollar',
+  CAD: 'Canadian Dollar',
+  JPY: 'Japanese Yen',
+  CNY: 'Chinese Yuan',
+  AED: 'UAE Dirham',
+  SAR: 'Saudi Riyal',
+};
   
   // Quick add vendor modal states
   const [showAddVendor, setShowAddVendor] = useState(false);
@@ -107,6 +126,30 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ visible, onClo
     setNewCategoryName("");  // ADD THIS
     setNewCategoryColor("#EF4444");  // ADD THIS
   };
+
+  // Load enabled currencies from settings
+React.useEffect(() => {
+  if (visible && enabledCurrencies) {
+    const currencies = enabledCurrencies.map(code => ({
+      code,
+      symbol: getCurrencySymbol(code),
+      name: CURRENCY_NAMES[code] || code
+    }));
+    setAvailableCurrencies(currencies);
+    setCurrency(baseCurrency);
+  }
+}, [visible, enabledCurrencies, baseCurrency, getCurrencySymbol]);
+
+// Preview conversion
+React.useEffect(() => {
+  if (currency !== baseCurrency && amount) {
+    convertToBaseCurrency(parseFloat(amount || '0'), currency)
+      .then(({ baseAmount }) => setConvertedPreview(baseAmount))
+      .catch(() => setConvertedPreview(0));
+  } else {
+    setConvertedPreview(0);
+  }
+}, [amount, currency, baseCurrency]);
 
   // AI categorization using your edge function
   // src/components/expense/AddExpenseModal.tsx
@@ -283,35 +326,42 @@ const { data: vendors, refetch: refetchVendors } = useQuery({
     }
   };
   const handleSubmit = async () => {
-    if (!amount || !description || !user) return;
+  if (!amount || !description || !user) return;
 
-    setLoading(true);
-    
-    try {
-      const baseAmount = parseFloat(amount);
-      const taxRateNum = includeTax ? (parseFloat(taxRate) || 0) : 0;
-      const taxAmountCalc = taxRateNum > 0 ? (baseAmount * taxRateNum) / 100 : 0;
+  setLoading(true);
+  
+  try {
+    const amountNum = parseFloat(amount);
+    const taxRateNum = includeTax ? (parseFloat(taxRate) || 0) : 0;
+    const taxAmountCalc = taxRateNum > 0 ? (amountNum * taxRateNum) / 100 : 0;
 
-      const expenseData: any = {
-        user_id: user.id,
-        amount: baseAmount,
-        description,
-        vendor_id: selectedVendor || null,
-        category_id: selectedCategory || suggestedCategory?.categoryId || null,
-        date: format(selectedDate, 'yyyy-MM-dd'),
-        receipt_url: receiptUri || null,
-        tax_rate: taxRateNum || null,
-        tax_amount: taxAmountCalc || null,
-      };
+    // Convert to base currency
+    const { baseAmount, exchangeRate } = await convertToBaseCurrency(amountNum, currency);
+    const baseTaxAmount = taxRateNum > 0 ? (baseAmount * taxRateNum) / 100 : 0;
 
-      await createMutation.mutateAsync(expenseData);
-    } catch (error) {
-      console.error('Error creating expense:', error);
-      Alert.alert('Error', 'Failed to create expense');
-    } finally {
-      setLoading(false);
-    }
-  };
+    const expenseData: any = {
+      user_id: user.id,
+      amount: amountNum,
+      description,
+      vendor_id: selectedVendor || null,
+      category_id: selectedCategory || suggestedCategory?.categoryId || null,
+      date: format(selectedDate, 'yyyy-MM-dd'),
+      receipt_url: receiptUri || null,
+      tax_rate: taxRateNum || null,
+      tax_amount: taxAmountCalc || null,
+      currency: currency,
+      base_amount: baseAmount,
+      exchange_rate: exchangeRate,
+    };
+
+    await createMutation.mutateAsync(expenseData);
+  } catch (error) {
+    console.error('Error creating expense:', error);
+    Alert.alert('Error', 'Failed to create expense');
+  } finally {
+    setLoading(false);
+  }
+};
 
   const useDropdownForVendors = vendors && vendors.length > 5;
 
@@ -376,17 +426,35 @@ const { data: vendors, refetch: refetchVendors } = useQuery({
                 )}
               </View>
 
-              {/* Amount Input */}
-              <View style={styles.amountInputContainer}>
-                <Text style={styles.currencySymbol}>{currencySymbol}</Text>
-                <TextInput
-                  style={styles.amountInput}
-                  placeholder="0.00"
-                  placeholderTextColor={Colors.light.textTertiary}
-                  value={amount}
-                  onChangeText={setAmount}
-                  keyboardType="decimal-pad"
-                />
+              {/* Amount Input with Currency Selector */}
+              <View style={styles.amountSection}>
+                <Text style={styles.inputLabel}>Amount</Text>
+                <View style={styles.amountRow}>
+                  <TouchableOpacity 
+                    style={styles.currencySelector}
+                    onPress={() => setShowCurrencySelector(true)}
+                  >
+                    <Text style={styles.currencySelectorText}>
+                      {getCurrencySymbol(currency)} {currency}
+                    </Text>
+                    <Feather name="chevron-down" size={16} color={Colors.light.textSecondary} />
+                  </TouchableOpacity>
+                  <View style={styles.amountInputContainer}>
+                    <TextInput
+                      style={styles.amountInput}
+                      placeholder="0.00"
+                      placeholderTextColor={Colors.light.textTertiary}
+                      value={amount}
+                      onChangeText={setAmount}
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+                </View>
+                {currency !== baseCurrency && amount && convertedPreview > 0 && (
+                  <Text style={styles.conversionNote}>
+                    ≈ {formatCurrency(convertedPreview)} (will be converted at current rate)
+                  </Text>
+                )}
               </View>
 
               {/* Description */}
@@ -397,107 +465,152 @@ const { data: vendors, refetch: refetchVendors } = useQuery({
                 onChangeText={setDescription}
                 icon="edit-3"
               />
-              {/* Tax Section */}
-              <TouchableOpacity
-                style={styles.taxToggle}
-                onPress={() => setIncludeTax(!includeTax)}
-              >
-                <MaterialIcons 
-                  name={includeTax ? "check-box" : "check-box-outline-blank"} 
-                  size={24} 
-                  color="#EF4444" 
-                />
-                <Text style={styles.taxToggleText}>Apply Tax</Text>
-              </TouchableOpacity>
+              
+                {/* Tax Section */}
+<TouchableOpacity
+  style={styles.taxToggle}
+  onPress={() => setIncludeTax(!includeTax)}
+>
+  <MaterialIcons 
+    name={includeTax ? "check-box" : "check-box-outline-blank"} 
+    size={24} 
+    color="#EF4444" 
+  />
+  <Text style={styles.taxToggleText}>
+    {isUKBusiness ? 'Apply VAT' : 'Apply Tax'}
+  </Text>
+</TouchableOpacity>
 
-              {includeTax && (
-                <View style={styles.taxSection}>
-                  <Text style={styles.inputLabel}>Tax Rate (%)</Text>
-                  <View style={styles.taxInputContainer}>
-                    <TextInput
-                      style={styles.taxInput}
-                      placeholder="0"
-                      value={taxRate}
-                      onChangeText={setTaxRate}
-                      keyboardType="decimal-pad"
-                    />
-                    <Text style={styles.taxPercent}>%</Text>
-                  </View>
-                  {parseFloat(taxRate) > 0 && parseFloat(amount) > 0 && (
-                    <View style={styles.taxCalculation}>
-                      <Text style={styles.taxCalcText}>
-                        Tax: {currencySymbol}{(parseFloat(amount) * parseFloat(taxRate) / 100).toFixed(2)}
-                      </Text>
-                      <Text style={styles.taxCalcText}>
-                        Total: {currencySymbol}{(parseFloat(amount) * (1 + parseFloat(taxRate) / 100)).toFixed(2)}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              )}
-
-              {/* Vendor Selection */}
-                {/* Vendor Selection */}
-<View style={styles.selectionSection}>
-  <View style={styles.sectionHeader}>
-    <Text style={styles.inputLabel}>Vendor (Optional)</Text>
-    <TouchableOpacity
-      style={styles.addButton}
-      onPress={() => setShowAddVendor(true)}
-    >
-      <Feather name="plus" size={16} color="#EF4444" />
-      <Text style={styles.addButtonText}>Add New</Text>
-    </TouchableOpacity>
-  </View>
-  
-  {vendors && vendors.length > 0 ? (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-      <TouchableOpacity
-        style={[
-          styles.selectionChip,
-          !selectedVendor && styles.selectionChipSelected,
-        ]}
-        onPress={() => setSelectedVendor('')}
-      >
-        <Text
-          style={[
-            styles.selectionChipText,
-            !selectedVendor && styles.selectionChipTextSelected,
-          ]}
-        >
-          None
-        </Text>
-      </TouchableOpacity>
-      {vendors.map((vendor: any) => (
-        <TouchableOpacity
-          key={vendor.id}
-          style={[
-            styles.selectionChip,
-            selectedVendor === vendor.id && styles.selectionChipSelected,
-          ]}
-          onPress={() => setSelectedVendor(vendor.id)}
-        >
-          <Text
+{includeTax && (
+  <View style={styles.taxSection}>
+    <Text style={styles.inputLabel}>{isUKBusiness ? 'VAT Rate' : 'Tax Rate'}</Text>
+    
+    {/* Show saved tax rates as buttons */}
+    {taxRates && Object.keys(taxRates).length > 0 ? (
+      <View style={styles.taxRateButtons}>
+        {Object.entries(taxRates).map(([name, rate]) => (
+          <TouchableOpacity
+            key={name}
             style={[
-              styles.selectionChipText,
-              selectedVendor === vendor.id && styles.selectionChipTextSelected,
+              styles.taxRateButton,
+              taxRate === String(rate) && styles.taxRateButtonSelected
             ]}
+            onPress={() => setTaxRate(String(rate))}
           >
-            {vendor.name}
-          </Text>
+            <Text style={[
+              styles.taxRateButtonText,
+              taxRate === String(rate) && styles.taxRateButtonTextSelected
+            ]}>
+              {name}
+            </Text>
+            <Text style={[
+              styles.taxRatePercent,
+              taxRate === String(rate) && styles.taxRatePercentSelected
+            ]}>
+              {rate}%
+            </Text>
+          </TouchableOpacity>
+        ))}
+        <TouchableOpacity
+          style={[
+            styles.taxRateButton,
+            !Object.values(taxRates).includes(Number(taxRate)) && taxRate !== "0" && styles.taxRateButtonSelected
+          ]}
+          onPress={() => setTaxRate("0")}
+        >
+          <Text style={styles.taxRateButtonText}>Custom</Text>
         </TouchableOpacity>
-      ))}
-    </ScrollView>
-  ) : (
-    <TouchableOpacity
-      style={styles.emptyStateButton}
-      onPress={() => setShowAddVendor(true)}
-    >
-      <Feather name="plus" size={18} color="#EF4444" />
-      <Text style={styles.emptyStateText}>Add your first vendor</Text>
-    </TouchableOpacity>
-  )}
-</View>
+      </View>
+    ) : null}
+    
+    {/* Show input for custom rate or if no saved rates */}
+    {(!taxRates || Object.keys(taxRates).length === 0 || !Object.values(taxRates).includes(Number(taxRate))) && (
+      <View style={styles.taxInputContainer}>
+        <TextInput
+          style={styles.taxInput}
+          placeholder="0"
+          value={taxRate}
+          onChangeText={setTaxRate}
+          keyboardType="decimal-pad"
+        />
+        <Text style={styles.taxPercent}>%</Text>
+      </View>
+    )}
+    
+    {parseFloat(taxRate) > 0 && parseFloat(amount) > 0 && (
+      <View style={styles.taxCalculation}>
+        <Text style={styles.taxCalcText}>
+          Tax: {getCurrencySymbol(currency)} {(parseFloat(amount) * parseFloat(taxRate) / 100).toFixed(2)}
+        </Text>
+        <Text style={styles.taxCalcText}>
+          Total: {getCurrencySymbol(currency)} {(parseFloat(amount) * (1 + parseFloat(taxRate) / 100)).toFixed(2)}
+        </Text>
+      </View>
+    )}
+  </View>
+)}
+
+                {/* Vendor Selection */}
+              <View style={styles.selectionSection}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.inputLabel}>Vendor (Optional)</Text>
+                  <TouchableOpacity
+                    style={styles.addButton}
+                    onPress={() => setShowAddVendor(true)}
+                  >
+                    <Feather name="plus" size={16} color="#EF4444" />
+                    <Text style={styles.addButtonText}>Add New</Text>
+                  </TouchableOpacity>
+                </View>
+                
+                {vendors && vendors.length > 0 ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <TouchableOpacity
+                      style={[
+                        styles.selectionChip,
+                        !selectedVendor && styles.selectionChipSelected,
+                      ]}
+                      onPress={() => setSelectedVendor('')}
+                    >
+                      <Text
+                        style={[
+                          styles.selectionChipText,
+                          !selectedVendor && styles.selectionChipTextSelected,
+                        ]}
+                      >
+                        None
+                      </Text>
+                    </TouchableOpacity>
+                    {vendors.map((vendor: any) => (
+                      <TouchableOpacity
+                        key={vendor.id}
+                        style={[
+                          styles.selectionChip,
+                          selectedVendor === vendor.id && styles.selectionChipSelected,
+                        ]}
+                        onPress={() => setSelectedVendor(vendor.id)}
+                      >
+                        <Text
+                          style={[
+                            styles.selectionChipText,
+                            selectedVendor === vendor.id && styles.selectionChipTextSelected,
+                          ]}
+                        >
+                          {vendor.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.emptyStateButton}
+                    onPress={() => setShowAddVendor(true)}
+                  >
+                    <Feather name="plus" size={18} color="#EF4444" />
+                    <Text style={styles.emptyStateText}>Add your first vendor</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
 
               {/* Date Picker */}
               <TouchableOpacity
@@ -735,9 +848,51 @@ const { data: vendors, refetch: refetchVendors } = useQuery({
           </View>
         </View>
       </Modal>
+      {/* Currency Selector Modal */}
+<Modal
+  visible={showCurrencySelector}
+  animationType="fade"
+  transparent
+  onRequestClose={() => setShowCurrencySelector(false)}
+>
+  <TouchableOpacity 
+    style={styles.modalOverlay}
+    activeOpacity={1}
+    onPress={() => setShowCurrencySelector(false)}
+  >
+    <View style={styles.currencyModalContent}>
+      <Text style={styles.currencyModalTitle}>Select Currency</Text>
+      {availableCurrencies.map((curr) => (
+        <TouchableOpacity
+          key={curr.code}
+          style={[
+            styles.currencyOption,
+            currency === curr.code && styles.currencyOptionSelected
+          ]}
+          onPress={() => {
+            setCurrency(curr.code);
+            setShowCurrencySelector(false);
+          }}
+        >
+          <View style={styles.currencyOptionLeft}>
+            <Text style={styles.currencySymbolDisplay}>{curr.symbol}</Text>
+            <View>
+              <Text style={styles.currencyCode}>{curr.code}</Text>
+              <Text style={styles.currencyName}>{curr.name}</Text>
+            </View>
+          </View>
+          {currency === curr.code && (
+            <Feather name="check" size={20} color="#EF4444" />
+          )}
+        </TouchableOpacity>
+      ))}
+    </View>
+  </TouchableOpacity>
+</Modal>
     </Modal>
     
   );
+  
 };
 
 const styles = StyleSheet.create({
@@ -756,6 +911,118 @@ const styles = StyleSheet.create({
   modalGradient: {
     flex: 1,
   },
+  amountSection: {
+  marginBottom: Spacing.md,
+},
+amountRow: {
+  flexDirection: 'row',
+  gap: Spacing.sm,
+},
+
+taxRateButtons: {
+  flexDirection: 'row',
+  flexWrap: 'wrap',
+  gap: Spacing.sm,
+  marginBottom: Spacing.sm,
+},
+taxRateButton: {
+  paddingVertical: Spacing.sm,
+  paddingHorizontal: Spacing.md,
+  backgroundColor: Colors.light.backgroundSecondary,
+  borderRadius: BorderRadius.md,
+  borderWidth: 1.5,
+  borderColor: Colors.light.border,
+  minWidth: 80,
+  alignItems: 'center',
+},
+taxRateButtonSelected: {
+  backgroundColor: '#EF4444' + '15',
+  borderColor: '#EF4444',
+},
+taxRateButtonText: {
+  fontSize: 13,
+  color: Colors.light.text,
+  fontWeight: '500',
+},
+taxRateButtonTextSelected: {
+  color: '#EF4444',
+  fontWeight: '600',
+},
+taxRatePercent: {
+  fontSize: 11,
+  color: Colors.light.textSecondary,
+},
+taxRatePercentSelected: {
+  color: '#EF4444',
+},
+currencySelector: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  paddingHorizontal: Spacing.md,
+  paddingVertical: Spacing.md,
+  backgroundColor: Colors.light.backgroundSecondary,
+  borderRadius: BorderRadius.md,
+  borderWidth: 1.5,
+  borderColor: Colors.light.border,
+  minWidth: 110,
+},
+currencySelectorText: {
+  fontSize: 16,
+  fontWeight: '600',
+  color: Colors.light.text,
+},
+conversionNote: {
+  fontSize: 12,
+  color: Colors.light.textSecondary,
+  marginTop: Spacing.xs,
+  fontStyle: 'italic',
+},
+currencyModalContent: {
+  backgroundColor: Colors.light.background,
+  borderRadius: BorderRadius.xl,
+  padding: Spacing.lg,
+  margin: Spacing.xl,
+  maxHeight: '70%',
+},
+currencyModalTitle: {
+  fontSize: 18,
+  fontWeight: '600',
+  color: Colors.light.text,
+  marginBottom: Spacing.md,
+},
+currencyOption: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  paddingVertical: Spacing.md,
+  paddingHorizontal: Spacing.sm,
+  borderBottomWidth: 1,
+  borderBottomColor: Colors.light.border,
+},
+currencyOptionSelected: {
+  backgroundColor: '#EF4444' + '10',
+},
+currencyOptionLeft: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: Spacing.md,
+},
+currencySymbolDisplay: {
+  fontSize: 20,
+  fontWeight: '600',
+  color: Colors.light.text,
+  width: 30,
+},
+currencyCode: {
+  fontSize: 16,
+  fontWeight: '600',
+  color: Colors.light.text,
+},
+currencyName: {
+  fontSize: 13,
+  color: Colors.light.textSecondary,
+},
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -827,14 +1094,16 @@ const styles = StyleSheet.create({
     marginTop: Spacing.sm,
   },
   amountInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.light.backgroundSecondary,
-    borderRadius: BorderRadius.md,
-    paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.md,
-    height: 56,
-  },
+  flex: 1,  // Add this
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: Colors.light.backgroundSecondary,
+  borderRadius: BorderRadius.md,
+  paddingHorizontal: Spacing.md,
+  height: 56,
+  borderWidth: 1.5,  // Add this
+  borderColor: Colors.light.border,  // Add this
+},
   currencySymbol: {
     fontSize: 24,
     fontWeight: '600',

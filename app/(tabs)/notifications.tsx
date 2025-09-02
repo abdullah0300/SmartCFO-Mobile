@@ -13,34 +13,36 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useSettings } from '../../src/contexts/SettingsContext';
 import { 
   getNotifications, 
   markNotificationAsRead, 
   markAllNotificationsAsRead,
-  deleteNotifications // You'll need to add this function
+  deleteNotifications
 } from '../../src/services/api';
-import { Colors, Spacing, Typography, BorderRadius } from '../../src/constants/Colors';
+import { Colors, Spacing, BorderRadius } from '../../src/constants/Colors';
 import { formatDistanceToNow } from 'date-fns';
 import * as Haptics from 'expo-haptics';
+import { RootStackParamList } from '../../App';
+
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 interface NotificationItemProps {
   notification: any;
   onPress: (notification: any) => void;
-  isSelecting: boolean;
-  isSelected: boolean;
-  onSelect: (id: string) => void;
+  formatCurrency: (amount: number | null | undefined) => string;
+  baseCurrency: string;
 }
 
 const NotificationItem: React.FC<NotificationItemProps> = ({ 
   notification, 
-  onPress, 
-  isSelecting, 
-  isSelected, 
-  onSelect 
+  onPress,
+  formatCurrency,
+  baseCurrency
 }) => {
-  const { formatCurrency } = useSettings();
   
   const getIcon = () => {
     switch (notification.type) {
@@ -49,85 +51,104 @@ const NotificationItem: React.FC<NotificationItemProps> = ({
       case 'invoice_overdue':
         return { name: 'alert-circle', color: '#EF4444' };
       case 'payment_received':
-        return { name: 'dollar-sign', color: '#10B981' };
-      case 'team_invite':
-        return { name: 'bell', color: Colors.light.primary };
+        return { name: 'attach-money', color: '#10B981', isMaterial: true };
+      case 'expense_high':
+        return { name: 'trending-up', color: '#F59E0B', isMaterial: true };
+      case 'tax_reminder':
+        return { name: 'receipt', color: '#8B5CF6', isMaterial: true };
       default:
-        return { name: 'bell', color: Colors.light.primary };
+        return { name: 'bell', color: '#6366F1' };
     }
   };
 
   const icon = getIcon();
 
   // Format notification message with proper currency
-  const formatMessage = (message: string) => {
-    const amountPattern = /\$?(\d+(?:\.\d{2})?)/g;
-    return message.replace(amountPattern, (match, amount) => {
-      const numAmount = parseFloat(amount);
-      return formatCurrency(numAmount);
-    });
-  };
-
-  const handlePress = () => {
-    if (isSelecting) {
-      onSelect(notification.id);
-    } else {
-      onPress(notification);
+  const formatMessage = (message: string, data: any) => {
+    let formattedMessage = message;
+    
+    // Handle amount formatting
+    if (data?.amount !== undefined) {
+      const formattedAmount = formatCurrency(data.amount);
+      formattedMessage = formattedMessage.replace('{{amount}}', formattedAmount);
     }
+    
+    // Handle client name
+    if (data?.client_name) {
+      formattedMessage = formattedMessage.replace('{{client}}', data.client_name);
+    }
+    
+    // Handle invoice number
+    if (data?.invoice_number) {
+      formattedMessage = formattedMessage.replace('{{invoice}}', `#${data.invoice_number}`);
+    }
+    
+    return formattedMessage;
   };
 
   return (
     <TouchableOpacity
-      style={[
-        styles.notificationItem,
-        !notification.is_read && styles.unreadItem,
-        isSelected && styles.selectedItem,
-      ]}
-      onPress={handlePress}
-      onLongPress={() => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        onSelect(notification.id);
-      }}
+      style={styles.notificationItem}
+      onPress={() => onPress(notification)}
       activeOpacity={0.7}
     >
-      {isSelecting && (
-        <View style={styles.checkboxContainer}>
-          <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
-            {isSelected && (
-              <Feather name="check" size={16} color="#FFFFFF" />
-            )}
-          </View>
-        </View>
-      )}
+      <View style={[styles.iconContainer, { backgroundColor: icon.color + '15' }]}>
+        {icon.isMaterial ? (
+          <MaterialIcons name={icon.name as any} size={20} color={icon.color} />
+        ) : (
+          <Feather name={icon.name as any} size={20} color={icon.color} />
+        )}
+      </View>
       
-      <View style={[styles.iconContainer, { backgroundColor: icon.color + '20' }]}>
-        <Feather name={icon.name as any} size={20} color={icon.color} />
-      </View>
       <View style={styles.content}>
-        <Text style={styles.title}>{notification.title}</Text>
+        <View style={styles.contentHeader}>
+          <Text style={styles.title}>{notification.title}</Text>
+          {!notification.is_read && <View style={styles.unreadDot} />}
+        </View>
+        
         <Text style={styles.message} numberOfLines={2}>
-          {formatMessage(notification.message)}
+          {formatMessage(notification.message, notification.data)}
         </Text>
-        <Text style={styles.time}>
-          {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
-        </Text>
+        
+        <View style={styles.metaRow}>
+          <Text style={styles.time}>
+            {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
+          </Text>
+          
+          {notification.data?.currency && notification.data.currency !== baseCurrency && (
+            <View style={styles.currencyBadge}>
+              <Text style={styles.currencyText}>{notification.data.currency}</Text>
+            </View>
+          )}
+        </View>
       </View>
-      {!notification.is_read && !isSelecting && <View style={styles.unreadDot} />}
     </TouchableOpacity>
   );
 };
 
 export default function NotificationsScreen() {
   const { user } = useAuth();
-  const navigation = useNavigation();
+  const navigation = useNavigation<NavigationProp>();
   const queryClient = useQueryClient();
+  const { formatCurrency, baseCurrency } = useSettings();
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [isSelecting, setIsSelecting] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'unread' | 'financial'>('all');
 
   const { data: notifications, isLoading, refetch } = useQuery({
-    queryKey: ['notifications', user?.id],
-    queryFn: () => getNotifications(user!.id),
+    queryKey: ['notifications', user?.id, filter],
+    queryFn: async () => {
+      const allNotifications = await getNotifications(user!.id);
+      
+      // Filter based on selected filter
+      if (filter === 'unread') {
+        return allNotifications.filter((n: any) => !n.is_read);
+      } else if (filter === 'financial') {
+        return allNotifications.filter((n: any) => 
+          ['invoice_paid', 'invoice_overdue', 'payment_received', 'expense_high'].includes(n.type)
+        );
+      }
+      return allNotifications;
+    },
     enabled: !!user,
   });
 
@@ -142,19 +163,7 @@ export default function NotificationsScreen() {
     mutationFn: () => markAllNotificationsAsRead(user!.id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
-    },
-  });
-
-  const deleteNotificationsMutation = useMutation({
-    mutationFn: (ids: string[]) => deleteNotifications(ids),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
-      setSelectedIds([]);
-      setIsSelecting(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    },
-    onError: (error: any) => {
-      Alert.alert('Error', error.message || 'Failed to delete notifications');
     },
   });
 
@@ -162,67 +171,18 @@ export default function NotificationsScreen() {
     if (!notification.is_read) {
       await markAsReadMutation.mutateAsync(notification.id);
     }
-    // Here you could add navigation to the related content
-    // e.g., if (notification.type === 'invoice_paid') navigation.navigate('InvoiceView', { invoiceId: notification.related_id })
-  };
-
-  const handleMarkAllAsRead = () => {
-    Alert.alert(
-      'Mark All as Read',
-      'Are you sure you want to mark all notifications as read?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Mark All',
-          onPress: () => markAllAsReadMutation.mutate(),
-        },
-      ]
-    );
-  };
-
-  const toggleSelectMode = () => {
-    if (isSelecting) {
-      setSelectedIds([]);
+    
+    // Navigate based on notification type
+    switch (notification.type) {
+      case 'invoice_paid':
+      case 'invoice_overdue':
+        if (notification.data?.invoice_id) {
+          navigation.navigate('InvoiceView', { 
+            invoiceId: notification.data.invoice_id 
+          });
+        }
+        break;
     }
-    setIsSelecting(!isSelecting);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  };
-
-  const handleSelectAll = () => {
-    if (notifications) {
-      if (selectedIds.length === notifications.length) {
-        setSelectedIds([]);
-      } else {
-        setSelectedIds(notifications.map((n: any) => n.id));
-      }
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-  };
-
-  const handleSelect = (id: string) => {
-    setIsSelecting(true);
-    if (selectedIds.includes(id)) {
-      setSelectedIds(selectedIds.filter(selectedId => selectedId !== id));
-    } else {
-      setSelectedIds([...selectedIds, id]);
-    }
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  };
-
-  const handleDelete = () => {
-    const count = selectedIds.length;
-    Alert.alert(
-      'Delete Notifications',
-      `Are you sure you want to delete ${count} notification${count > 1 ? 's' : ''}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => deleteNotificationsMutation.mutate(selectedIds),
-        },
-      ]
-    );
   };
 
   const onRefresh = async () => {
@@ -235,76 +195,51 @@ export default function NotificationsScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => {
-            if (isSelecting) {
-              setIsSelecting(false);
-              setSelectedIds([]);
-            } else {
-              navigation.goBack();
-            }
-          }}
-          style={styles.backButton}
-        >
-          <Feather 
-            name={isSelecting ? "x" : "arrow-left"} 
-            size={24} 
-            color={Colors.light.text} 
-          />
-        </TouchableOpacity>
-        
-        <Text style={styles.headerTitle}>
-          {isSelecting ? `${selectedIds.length} selected` : 'Notifications'}
-        </Text>
-        
-        <View style={styles.headerRight}>
-          {isSelecting ? (
-            <View style={styles.selectionActions}>
-              <TouchableOpacity 
-                onPress={handleSelectAll}
-                style={styles.headerButton}
-              >
-                <Text style={styles.headerButtonText}>
-                  {selectedIds.length === notifications?.length ? 'Deselect All' : 'Select All'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.normalActions}>
-              {notifications && notifications.length > 0 && (
-                <TouchableOpacity 
-                  onPress={toggleSelectMode}
-                  style={styles.iconButton}
-                >
-                  <MaterialIcons name="check-circle-outline" size={24} color={Colors.light.primary} />
-                </TouchableOpacity>
-              )}
-              {unreadCount > 0 && (
-                <TouchableOpacity 
-                  onPress={handleMarkAllAsRead}
-                  style={styles.iconButton}
-                >
-                  <Feather name="check-square" size={22} color={Colors.light.primary} />
-                </TouchableOpacity>
-              )}
+      {/* Header */}
+      <LinearGradient
+        colors={['#3B82F6', '#8B5CF6']}
+        style={styles.header}
+      >
+        <View style={styles.headerContent}>
+          <Text style={styles.headerTitle}>Notifications</Text>
+          {unreadCount > 0 && (
+            <View style={styles.unreadBadge}>
+              <Text style={styles.unreadBadgeText}>{unreadCount}</Text>
             </View>
           )}
         </View>
-      </View>
-
-      {/* Selection toolbar */}
-      {isSelecting && selectedIds.length > 0 && (
-        <View style={styles.selectionToolbar}>
-          <TouchableOpacity
-            style={[styles.toolbarButton, styles.deleteButton]}
-            onPress={handleDelete}
+        
+        {unreadCount > 0 && (
+          <TouchableOpacity 
+            onPress={() => markAllAsReadMutation.mutate()}
+            style={styles.markAllButton}
           >
-            <Feather name="trash-2" size={20} color="#FFFFFF" />
-            <Text style={styles.toolbarButtonText}>Delete</Text>
+            <Feather name="check-circle" size={18} color="#FFFFFF" />
+            <Text style={styles.markAllText}>Mark all read</Text>
           </TouchableOpacity>
-        </View>
-      )}
+        )}
+      </LinearGradient>
+
+      {/* Filter Tabs */}
+      <View style={styles.filterContainer}>
+        {(['all', 'unread', 'financial'] as const).map((tab) => (
+          <TouchableOpacity
+            key={tab}
+            onPress={() => setFilter(tab)}
+            style={[
+              styles.filterTab,
+              filter === tab && styles.filterTabActive,
+            ]}
+          >
+            <Text style={[
+              styles.filterTabText,
+              filter === tab && styles.filterTabTextActive,
+            ]}>
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       <FlatList
         data={notifications}
@@ -313,28 +248,33 @@ export default function NotificationsScreen() {
           <NotificationItem
             notification={item}
             onPress={handleNotificationPress}
-            isSelecting={isSelecting}
-            isSelected={selectedIds.includes(item.id)}
-            onSelect={handleSelect}
+            formatCurrency={formatCurrency}
+            baseCurrency={baseCurrency}
           />
         )}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor={Colors.light.primary}
+            tintColor="#3B82F6"
           />
         }
-        contentContainerStyle={[
-          styles.listContent,
-          isSelecting && selectedIds.length > 0 && styles.listContentWithToolbar
-        ]}
+        contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           <View style={styles.emptyState}>
-            <Feather name="bell-off" size={48} color={Colors.light.textTertiary} />
-            <Text style={styles.emptyText}>No notifications yet</Text>
+            <LinearGradient
+              colors={['#EFF6FF', '#DBEAFE']}
+              style={styles.emptyIcon}
+            >
+              <Feather name="bell-off" size={32} color="#3B82F6" />
+            </LinearGradient>
+            <Text style={styles.emptyText}>
+              {filter === 'unread' ? 'All caught up!' : 'No notifications'}
+            </Text>
             <Text style={styles.emptySubtext}>
-              We'll notify you when something important happens
+              {filter === 'unread' 
+                ? 'You have no unread notifications'
+                : "We'll notify you about important updates"}
             </Text>
           </View>
         }
@@ -346,126 +286,89 @@ export default function NotificationsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.light.backgroundSecondary,
+    backgroundColor: '#F9FAFB',
   },
   header: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.lg,
+  },
+  headerContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    backgroundColor: Colors.light.background,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.full,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: Colors.light.text,
-    flex: 1,
-    marginLeft: Spacing.sm,
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
-  headerRight: {
+  unreadBadge: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  unreadBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#3B82F6',
+  },
+  markAllButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
   },
-  normalActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  selectionActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  iconButton: {
-    padding: Spacing.xs,
-  },
-  headerButton: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
-  },
-  headerButtonText: {
+  markAllText: {
     fontSize: 14,
-    color: Colors.light.primary,
-    fontWeight: '600',
+    color: '#FFFFFF',
+    fontWeight: '500',
   },
-  selectionToolbar: {
-    backgroundColor: Colors.light.background,
+  filterContainer: {
+    flexDirection: 'row',
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
+    backgroundColor: '#FFFFFF',
+    gap: 8,
   },
-  toolbarButton: {
-    flexDirection: 'row',
+  filterTab: {
+    flex: 1,
+    paddingVertical: 8,
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    gap: Spacing.xs,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
   },
-  deleteButton: {
-    backgroundColor: Colors.light.error,
+  filterTabActive: {
+    backgroundColor: '#EEF2FF',
   },
-  toolbarButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-    fontSize: 14,
+  filterTabText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#6B7280',
+  },
+  filterTabTextActive: {
+    color: '#6366F1',
   },
   listContent: {
-    paddingVertical: Spacing.sm,
-  },
-  listContentWithToolbar: {
-    paddingBottom: Spacing.xxl,
+    paddingVertical: Spacing.md,
   },
   notificationItem: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: Colors.light.background,
-    padding: Spacing.md,
-    marginHorizontal: Spacing.md,
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: Spacing.lg,
     marginBottom: Spacing.sm,
-    borderRadius: BorderRadius.md,
-  },
-  unreadItem: {
-    backgroundColor: Colors.light.primary + '08',
-  },
-  selectedItem: {
-    backgroundColor: Colors.light.primary + '15',
-    borderWidth: 1,
-    borderColor: Colors.light.primary + '30',
-  },
-  checkboxContainer: {
-    marginRight: Spacing.sm,
-    paddingTop: 2,
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: BorderRadius.sm,
-    borderWidth: 2,
-    borderColor: Colors.light.border,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: Colors.light.background,
-  },
-  checkboxSelected: {
-    backgroundColor: Colors.light.primary,
-    borderColor: Colors.light.primary,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
   iconContainer: {
     width: 40,
     height: 40,
-    borderRadius: BorderRadius.full,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: Spacing.md,
@@ -473,46 +376,71 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
-  title: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.light.text,
+  contentHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 4,
+  },
+  title: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1F2937',
+    flex: 1,
   },
   message: {
     fontSize: 14,
-    color: Colors.light.textSecondary,
+    color: '#6B7280',
     lineHeight: 20,
-    marginBottom: 4,
+    marginBottom: 6,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   time: {
     fontSize: 12,
-    color: Colors.light.textTertiary,
+    color: '#9CA3AF',
+  },
+  currencyBadge: {
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  currencyText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#6B7280',
   },
   unreadDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: Colors.light.primary,
-    marginLeft: Spacing.sm,
-    marginTop: Spacing.sm,
+    backgroundColor: '#3B82F6',
   },
   emptyState: {
-    flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: Spacing.xxl * 3,
+  },
+  emptyIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
   },
   emptyText: {
     fontSize: 18,
     fontWeight: '600',
-    color: Colors.light.textSecondary,
-    marginTop: Spacing.md,
+    color: '#1F2937',
+    marginBottom: 4,
   },
   emptySubtext: {
     fontSize: 14,
-    color: Colors.light.textTertiary,
-    marginTop: Spacing.xs,
+    color: '#6B7280',
     textAlign: 'center',
     paddingHorizontal: Spacing.xl,
   },

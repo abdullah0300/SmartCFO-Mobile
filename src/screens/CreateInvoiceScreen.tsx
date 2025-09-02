@@ -18,11 +18,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNavigation } from '@react-navigation/native';
+import { useRoute } from '@react-navigation/native';
 import { format, addDays } from 'date-fns';
 import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
 
 import { useAuth } from '../hooks/useAuth';
+import { calculateVATFromNet, aggregateVATByRate } from '../utils/vatCalculations';
+import { countries } from '../data/countries';
 import { useSettings } from '../contexts/SettingsContext';
 import { useQueryClient } from '@tanstack/react-query';
 import { 
@@ -47,6 +50,10 @@ interface NewInvoiceItem {
   quantity: number;
   rate: number;
   amount: number;
+  tax_rate?: number;
+  tax_amount?: number;
+  net_amount?: number;
+  gross_amount?: number;
 }
 
 type RootStackParamList = {
@@ -62,10 +69,20 @@ type CreateInvoiceNavigationProp = NativeStackNavigationProp<RootStackParamList,
 export default function CreateInvoiceScreen() {
   const navigation = useNavigation<CreateInvoiceNavigationProp>();
   const { user } = useAuth();
-  const { formatCurrency, currencySymbol } = useSettings();
+  const route = useRoute();
+  const invoiceId = (route.params as any)?.invoiceId;
+  const isEditMode = !!invoiceId;
+  const { formatCurrency, currencySymbol, baseCurrency, getCurrencySymbol, enabledCurrencies, convertToBaseCurrency, taxRates, settings, userCountry } = useSettings();
+  const taxRateOptions = Object.entries(taxRates).map(([name, rate]) => ({
+  id: name,
+  name: name,
+  rate: Number(rate)
+  }));
   const queryClient = useQueryClient();
-  
   const [loading, setLoading] = useState(false);
+  const countryData = countries.find(c => c.code === userCountry);
+  const taxLabel = countryData?.taxName || 'Tax';
+  const requiresLineItemVAT = countryData?.taxFeatures?.requiresInvoiceTaxBreakdown === true;
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [issueDate, setIssueDate] = useState(new Date());
@@ -75,7 +92,9 @@ export default function CreateInvoiceScreen() {
   const [notes, setNotes] = useState('');
   const [incomeCategoryId, setIncomeCategoryId] = useState('');
   const [taxRate, setTaxRate] = useState(0);
-  
+  const [selectedCurrency, setSelectedCurrency] = useState(baseCurrency);
+  const [exchangeRate, setExchangeRate] = useState(1);
+  const [showCurrencyModal, setShowCurrencyModal] = useState(false);
   // Recurring invoice states
   const [isRecurring, setIsRecurring] = useState(false);
   const [frequency, setFrequency] = useState<'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly'>('monthly');
@@ -89,11 +108,15 @@ export default function CreateInvoiceScreen() {
   const [templates, setTemplates] = useState<any[]>([]);
   
   const [items, setItems] = useState<NewInvoiceItem[]>([{
-    description: '',
-    quantity: 1,
-    rate: 0,
-    amount: 0,
-  }]);
+  description: '',
+  quantity: 1,
+  rate: 0,
+  amount: 0,
+  tax_rate: 0,  
+  tax_amount: 0,
+  net_amount: 0,
+  gross_amount: 0,
+}]);
   
   const [clients, setClients] = useState<Client[]>([]);
   const [incomeCategories, setIncomeCategories] = useState<Category[]>([]);
@@ -101,9 +124,36 @@ export default function CreateInvoiceScreen() {
   const [loadingData, setLoadingData] = useState(true);
   const [showClientModal, setShowClientModal] = useState(false);
 
+
+
+
   useEffect(() => {
     loadInitialData();
   }, []);
+
+  useEffect(() => {
+    if (isEditMode) {
+      loadInvoiceForEdit();
+    }
+  }, [invoiceId]);
+
+  useEffect(() => {
+  const fetchExchangeRate = async () => {
+    if (selectedCurrency && selectedCurrency !== baseCurrency) {
+      try {
+        const result = await convertToBaseCurrency(1, selectedCurrency);
+        setExchangeRate(result.exchangeRate);
+      } catch (error) {
+        console.error('Error fetching exchange rate:', error);
+        setExchangeRate(1);
+      }
+    } else {
+      setExchangeRate(1);
+    }
+  };
+  
+  fetchExchangeRate();
+}, [selectedCurrency, baseCurrency]);
 
   const loadInitialData = async () => {
     if (!user) return;
@@ -123,27 +173,33 @@ export default function CreateInvoiceScreen() {
       setIncomeCategories(categoriesData || []);
       setTemplates(templatesData || []);
       
-      // Generate invoice number using the web app format
-      if (settingsData) {
-        setInvoiceSettings(settingsData);
-        const invoiceNum = await generateInvoiceNumber(user.id);
-        setInvoiceNumber(invoiceNum);
-        
-        // Set default due date based on settings
-        if (settingsData.due_days) {
-          setDueDate(addDays(new Date(), settingsData.due_days));
-        }
-        
-        // Set default tax rate
-        if (settingsData.tax_rate) {
-          setTaxRate(settingsData.tax_rate);
-        }
-        
-        // Set default notes
-        if (settingsData.notes) {
-          setNotes(settingsData.notes);
-        }
-      } else {
+      // Apply ALL invoice settings from web app
+if (settingsData) {
+  setInvoiceSettings(settingsData);
+  const invoiceNum = await generateInvoiceNumber(user.id);
+  setInvoiceNumber(invoiceNum);
+  
+  // Payment terms and due date
+  if (settingsData.payment_terms || settingsData.due_days) {
+    const days = settingsData.payment_terms || settingsData.due_days || 30;
+    setDueDate(addDays(issueDate, days));
+  }
+  
+  // Default tax rate
+  if (settingsData.default_tax_rate !== undefined && settingsData.default_tax_rate !== null) {
+    setTaxRate(Number(settingsData.default_tax_rate));
+  }
+  
+  // Default notes (use invoice_notes field from web app)
+  if (settingsData.invoice_notes) {
+    setNotes(settingsData.invoice_notes);
+  }
+  
+  // Default income category if set
+  if (settingsData.default_income_category_id) {
+    setIncomeCategoryId(settingsData.default_income_category_id);
+  }
+} else {
         // Generate default invoice number
         const invoiceNum = await generateInvoiceNumber(user.id);
         setInvoiceNumber(invoiceNum);
@@ -156,37 +212,119 @@ export default function CreateInvoiceScreen() {
     }
   };
 
-  const updateItem = (index: number, field: keyof NewInvoiceItem, value: string | number) => {
-    const newItems = [...items];
-    const item = { ...newItems[index] };
+  const loadInvoiceForEdit = async () => {
+    if (!invoiceId || !user) return;
     
-    switch (field) {
-      case 'quantity':
-      case 'rate':
-        item[field] = typeof value === 'string' ? parseFloat(value) || 0 : value;
-        item.amount = item.quantity * item.rate;
-        break;
-      case 'description':
-        item[field] = value as string;
-        break;
-      case 'amount':
-        item[field] = value as number;
-        break;
+    try {
+      const { data: invoice } = await supabase
+        .from('invoices')
+        .select(`
+          *,
+          items:invoice_items(*)
+        `)
+        .eq('id', invoiceId)
+        .single();
+      
+      if (!invoice) {
+        Alert.alert('Error', 'Invoice not found');
+        navigation.goBack();
+        return;
+      }
+      
+      // Check if invoice can be edited
+      if (invoice.status === 'paid' || invoice.status === 'canceled') {
+        Alert.alert('Cannot Edit', 'This invoice is locked and cannot be edited.');
+        navigation.goBack();
+        return;
+      }
+      
+      // Load invoice data into form
+      setInvoiceNumber(invoice.invoice_number);
+      setSelectedClient(invoice.client_id || '');
+      setIssueDate(new Date(invoice.date));
+      setDueDate(new Date(invoice.due_date));
+      setNotes(invoice.notes || '');
+      setTaxRate(invoice.tax_rate || 0);
+      setSelectedCurrency(invoice.currency || baseCurrency);
+      setIncomeCategoryId(invoice.income_category_id || '');
+      
+      // Check for recurring
+      const { data: recurringData } = await supabase
+        .from('recurring_invoices')
+        .select('*')
+        .eq('invoice_id', invoiceId)
+        .single();
+      
+      if (recurringData) {
+        setIsRecurring(true);
+        setFrequency(recurringData.frequency);
+        if (recurringData.end_date) {
+          setRecurringEndDate(new Date(recurringData.end_date));
+        }
+      }
+      
+      // Load items
+      if (invoice.items && invoice.items.length > 0) {
+        setItems(invoice.items.map((item: any) => ({
+          description: item.description,
+          quantity: item.quantity,
+          rate: item.rate,
+          amount: item.amount,
+          tax_rate: item.tax_rate || 0,
+          tax_amount: item.tax_amount || 0,
+          net_amount: item.net_amount || item.amount,
+          gross_amount: item.gross_amount || item.amount,
+        })));
+      }
+    } catch (error) {
+      console.error('Error loading invoice:', error);
+      Alert.alert('Error', 'Failed to load invoice');
     }
-    
-    newItems[index] = item;
-    setItems(newItems);
   };
+
+  const updateItem = (index: number, field: keyof NewInvoiceItem, value: string | number) => {
+  const newItems = [...items];
+  const item = { ...newItems[index] };
+  
+  if (field === 'quantity' || field === 'rate' || field === 'tax_rate') {
+    const quantity = field === 'quantity' ? Number(value) || 0 : item.quantity;
+    const rate = field === 'rate' ? Number(value) || 0 : item.rate;
+    const taxRate = field === 'tax_rate' ? Number(value) || 0 : (item.tax_rate || 0);
+    
+    if (requiresLineItemVAT) {
+      const vatCalc = calculateVATFromNet(quantity * rate, taxRate);
+      item.quantity = quantity;
+      item.rate = rate;
+      item.tax_rate = taxRate;
+      item.net_amount = vatCalc.net;
+      item.tax_amount = vatCalc.vat;
+      item.gross_amount = vatCalc.gross;
+      item.amount = vatCalc.gross;
+    } else {
+      item.quantity = quantity;
+      item.rate = rate;
+      item.amount = quantity * rate;
+    }
+  } else if (field === 'description') {
+    item.description = value as string;
+  }
+  
+  newItems[index] = item;
+  setItems(newItems);
+};
 
   const addItem = () => {
-    setItems([...items, {
-      description: '',
-      quantity: 1,
-      rate: 0,
-      amount: 0,
-    }]);
-  };
-
+  setItems([...items, {
+    description: '',
+    quantity: 1,
+    rate: 0,
+    amount: 0,
+    tax_rate: 0,
+    tax_amount: 0,
+    net_amount: 0,
+    gross_amount: 0,
+  }]);
+};
   const removeItem = (index: number) => {
     if (items.length > 1) {
       setItems(items.filter((_, i) => i !== index));
@@ -194,12 +332,51 @@ export default function CreateInvoiceScreen() {
   };
 
   const calculateTotals = () => {
+  if (requiresLineItemVAT) {
+    const itemsWithVAT = items.map(item => {
+      const vatCalc = calculateVATFromNet(
+        item.quantity * item.rate, 
+        item.tax_rate || 0
+      );
+      return {
+        ...item,
+        net_amount: vatCalc.net,
+        tax_amount: vatCalc.vat,
+        gross_amount: vatCalc.gross
+      };
+    });
+    
+    const vatBreakdown = aggregateVATByRate(itemsWithVAT);
+    
+    let netTotal = 0;
+    let taxTotal = 0;
+    let grossTotal = 0;
+    
+    Object.values(vatBreakdown).forEach(group => {
+      netTotal += group.net;
+      taxTotal += group.vat;
+      grossTotal += group.gross;
+    });
+    
+    return {
+      subtotal: netTotal,
+      taxAmount: taxTotal,
+      total: grossTotal,
+      vatBreakdown
+    };
+  } else {
     const subtotal = items.reduce((sum, item) => sum + item.amount, 0);
     const taxAmount = (subtotal * taxRate) / 100;
     const total = subtotal + taxAmount;
     
-    return { subtotal, taxRate, taxAmount, total };
-  };
+    return {
+      subtotal,
+      taxAmount,
+      total,
+      vatBreakdown: null
+    };
+        }
+      };
 
   const getNextInvoiceDate = () => {
     const today = new Date();
@@ -229,7 +406,7 @@ export default function CreateInvoiceScreen() {
     if (data.client_id) setSelectedClient(data.client_id);
     if (data.tax_rate !== undefined) setTaxRate(data.tax_rate);
     if (data.notes) setNotes(data.notes);
-    
+    if (data.currency) setSelectedCurrency(data.currency);
     // Load items
     if (data.items && data.items.length > 0) {
       setItems(data.items.map((item: any) => ({
@@ -244,234 +421,215 @@ export default function CreateInvoiceScreen() {
   };
 
   const handleSubmit = async () => {
-    // Validation
-    if (!selectedClient) {
-      Alert.alert('Error', 'Please select a client');
-      return;
-    }
+  // Validation
+  if (!selectedClient) {
+    Alert.alert('Error', 'Please select a client');
+    return;
+  }
+  
+  if (items.some(item => !item.description || item.amount === 0)) {
+    Alert.alert('Error', 'Please complete all item details');
+    return;
+  }
+  
+  if (!user) return;
+
+try {
+  setLoading(true);
+  
+  const { subtotal, taxAmount, total } = calculateTotals();
     
-    if (items.some(item => !item.description || item.amount === 0)) {
-      Alert.alert('Error', 'Please complete all item details');
-      return;
-    }
+  // Calculate exchange rate and base amounts
+  const conversionResult = await convertToBaseCurrency(total, selectedCurrency);
+  const baseAmount = conversionResult.baseAmount;
+  const currentExchangeRate = conversionResult.exchangeRate;
+  const baseTaxAmount = taxAmount / currentExchangeRate;
+  
+  // Prepare invoice data
+  const invoiceData = {
+    user_id: user.id,
+    invoice_number: invoiceNumber,
+    client_id: selectedClient,
+    date: format(issueDate, 'yyyy-MM-dd'),
+    due_date: format(dueDate, 'yyyy-MM-dd'),
+    status: 'draft' as const,
+    subtotal,
+    tax_rate: taxRate,
+    tax_amount: taxAmount,
+    total,
+    notes,
+    income_category_id: incomeCategoryId || null,
+    currency: selectedCurrency,
+    base_amount: baseAmount,
+    exchange_rate: currentExchangeRate,
+    base_tax_amount: baseTaxAmount,
+    tax_metadata: requiresLineItemVAT ? {
+      tax_scheme: settings?.uk_vat_scheme || 'standard',
+      vat_breakdown: calculateTotals().vatBreakdown,
+      has_line_item_vat: true,
+      tax_label: taxLabel,
+      country_code: countryData?.code
+    } : null,
+  };
+  
+  if (isEditMode) {
+    // UPDATE existing invoice
+    const { error: updateError } = await supabase
+      .from('invoices')
+      .update(invoiceData)
+      .eq('id', invoiceId);
     
-    if (!user) return;
+    if (updateError) throw updateError;
     
-    try {
-      setLoading(true);
-      const { subtotal, taxAmount, total } = calculateTotals();
+    // Delete old items and insert new ones
+    await supabase
+      .from('invoice_items')
+      .delete()
+      .eq('invoice_id', invoiceId);
+    
+    const { error: itemsError } = await supabase
+      .from('invoice_items')
+      .insert(items.map(item => ({
+        invoice_id: invoiceId,
+        description: item.description,
+        quantity: item.quantity,
+        rate: item.rate,
+        amount: item.amount,
+        tax_rate: item.tax_rate || 0,
+        tax_amount: item.tax_amount || 0,
+        net_amount: item.net_amount || 0,
+        gross_amount: item.gross_amount || 0,
+      })));
+    
+    if (itemsError) throw itemsError;
+    
+    // Handle recurring update if needed
+    if (isRecurring) {
+      const { data: existingRecurring } = await supabase
+        .from('recurring_invoices')
+        .select('*')
+        .eq('invoice_id', invoiceId)
+        .single();
       
-      // Create invoice
-      const invoice = {
+      const recurringData = {
         user_id: user.id,
-        invoice_number: invoiceNumber,
         client_id: selectedClient,
-        date: format(issueDate, 'yyyy-MM-dd'),
-        due_date: format(dueDate, 'yyyy-MM-dd'),
-        status: 'draft' as const,
-        subtotal,
-        tax_rate: taxRate,
-        tax_amount: taxAmount,
-        total,
-        notes,
-        income_category_id: incomeCategoryId || null,
-        currency: invoiceSettings?.currency || 'USD',
+        template_data: {
+          subtotal,
+          tax_rate: taxRate,
+          tax_amount: taxAmount,
+          total,
+          notes,
+          currency: selectedCurrency,
+          items: items.map(item => ({
+            description: item.description,
+            quantity: item.quantity,
+            rate: item.rate,
+            amount: item.amount,
+          })),
+        },
+        frequency,
+        next_date: format(getNextInvoiceDate(), 'yyyy-MM-dd'),
+        end_date: recurringEndDate ? format(recurringEndDate, 'yyyy-MM-dd') : null,
+        is_active: true,
       };
       
-      // Prepare recurring data if needed
-      let recurringData = null;
-      if (isRecurring) {
-        recurringData = {
-          user_id: user.id,
-          client_id: selectedClient,
-          template_data: {
-            subtotal,
-            tax_rate: taxRate,
-            tax_amount: taxAmount,
-            total,
-            notes,
-            currency: invoiceSettings?.currency || 'USD',
-            items: items.map(item => ({
-              description: item.description,
-              quantity: item.quantity,
-              rate: item.rate,
-              amount: item.amount,
-            })),
-          },
-          frequency,
-          next_date: format(getNextInvoiceDate(), 'yyyy-MM-dd'),
-          end_date: recurringEndDate ? format(recurringEndDate, 'yyyy-MM-dd') : null,
-          is_active: true,
-        };
-      }
-      
-      // Create invoice (with recurring if needed)
-      await createInvoice(invoice, items, isRecurring, recurringData);
-      
-      // Save as template if requested
-      if (saveAsTemplate && templateName) {
-        await createInvoiceTemplate({
-          user_id: user.id,
-          name: templateName,
-          template_data: {
-            client_id: selectedClient,
-            subtotal,
-            tax_rate: taxRate,
-            tax_amount: taxAmount,
-            total,
-            notes,
-            currency: invoiceSettings?.currency || 'USD',
-            items: items.map(item => ({
-              description: item.description,
-              quantity: item.quantity,
-              rate: item.rate,
-              amount: item.amount,
-            })),
-          },
-          is_default: false,
-          templateSelector: {
-    marginTop: Spacing.sm,
-  },
-  templateChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 8,
-    borderRadius: BorderRadius.full,
-    borderWidth: 1,
-    borderColor: '#8B5CF6',
-    backgroundColor: '#EDE9FE',
-    marginRight: Spacing.sm,
-    gap: 6,
-  },
-  templateChipText: {
-    fontSize: 14,
-    color: '#8B5CF6',
-    fontWeight: '500',
-  },
-  recurringToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: Spacing.sm,
-  },
-  recurringToggleLeft: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.sm,
-  },
-  recurringToggleText: {
-    flex: 1,
-  },
-  recurringToggleTitle: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#1F2937',
-  },
-  recurringToggleSubtitle: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  recurringOptions: {
-    marginTop: Spacing.md,
-    paddingTop: Spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-  },
-  recurringField: {
-    marginBottom: Spacing.md,
-  },
-  frequencySelector: {
-    marginTop: Spacing.sm,
-  },
-  frequencyChip: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 8,
-    borderRadius: BorderRadius.full,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#F9FAFB',
-    marginRight: Spacing.sm,
-  },
-  frequencyChipSelected: {
-    backgroundColor: '#EDE9FE',
-    borderColor: '#8B5CF6',
-  },
-  frequencyChipText: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  frequencyChipTextSelected: {
-    color: '#8B5CF6',
-    fontWeight: '500',
-  },
-  nextInvoiceText: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: Spacing.sm,
-  },
-  endDateButton: {
-    marginTop: Spacing.sm,
-  },
-  endDateValue: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    backgroundColor: '#F9FAFB',
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    marginTop: 6,
-  },
-  endDateText: {
-    fontSize: 14,
-    color: '#1F2937',
-  },
-  saveTemplateToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  saveTemplateText: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#1F2937',
-  },
-  templateNameInput: {
-    fontSize: 14,
-    color: '#1F2937',
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    backgroundColor: '#F9FAFB',
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    marginTop: Spacing.sm,
-  },
-});
-      }
-      
-      // Update invoice number in settings
-      if (invoiceSettings) {
+      if (existingRecurring) {
         await supabase
-          .from('invoice_settings')
-          .update({ next_number: (invoiceSettings.next_number || 1) + 1 })
-          .eq('user_id', user.id);
+          .from('recurring_invoices')
+          .update(recurringData)
+          .eq('invoice_id', invoiceId);
+      } else {
+        await supabase
+          .from('recurring_invoices')
+          .insert({ ...recurringData, invoice_id: invoiceId });
       }
-      
-      // Refresh invoices list
-      queryClient.invalidateQueries({ queryKey: ['invoices', user.id] });
-      if (isRecurring) {
-        queryClient.invalidateQueries({ queryKey: ['recurring-invoices', user.id] });
-      }
-      
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Success', 'Invoice created successfully', [
-        { text: 'OK', onPress: () => navigation.goBack() }
-      ]);
-    } catch (error) {
+    } else {
+      // Remove recurring if it existed
+      await supabase
+        .from('recurring_invoices')
+        .delete()
+        .eq('invoice_id', invoiceId);
+    }
+    
+    // Refresh and navigate
+    queryClient.invalidateQueries({ queryKey: ['invoices', user.id] });
+    
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Alert.alert('Success', 'Invoice updated successfully', [
+      { text: 'OK', onPress: () => navigation.goBack() }
+    ]);
+    
+  } else {
+    // CREATE new invoice (existing code remains the same)
+    const invoice = invoiceData;
+    
+    // Rest of your existing code for recurring data...
+    let recurringData = null;
+    if (isRecurring) {
+      recurringData = {
+        user_id: user.id,
+        client_id: selectedClient,
+        template_data: {
+          subtotal,
+          tax_rate: taxRate,
+          tax_amount: taxAmount,
+          total,
+          notes,
+          currency: selectedCurrency,
+          items: items.map(item => ({
+            description: item.description,
+            quantity: item.quantity,
+            rate: item.rate,
+            amount: item.amount,
+          })),
+        },
+        frequency,
+        next_date: format(getNextInvoiceDate(), 'yyyy-MM-dd'),
+        end_date: recurringEndDate ? format(recurringEndDate, 'yyyy-MM-dd') : null,
+        is_active: true,
+      };
+    }
+    
+    // Create invoice (with recurring if needed)
+    await createInvoice(invoice, items, isRecurring, recurringData);
+    
+    // Save as template if requested
+    if (saveAsTemplate && templateName) {
+      await createInvoiceTemplate({
+        user_id: user.id,
+        name: templateName,
+        template_data: {
+          client_id: selectedClient,
+          subtotal,
+          tax_rate: taxRate,
+          tax_amount: taxAmount,
+          total,
+          notes,
+          currency: selectedCurrency,
+          items: items.map(item => ({
+            description: item.description,
+            quantity: item.quantity,
+            rate: item.rate,
+            amount: item.amount,
+          })),
+        },
+        is_default: false,
+      });
+    }
+    
+    // Refresh invoices list
+    queryClient.invalidateQueries({ queryKey: ['invoices', user.id] });
+    if (isRecurring) {
+      queryClient.invalidateQueries({ queryKey: ['recurring-invoices', user.id] });
+    }
+    
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Alert.alert('Success', 'Invoice created successfully', [
+      { text: 'OK', onPress: () => navigation.goBack() }
+    ]);
+  }
+} catch (error) {
       console.error('Error creating invoice:', error);
       Alert.alert('Error', 'Failed to create invoice');
     } finally {
@@ -523,33 +681,28 @@ export default function CreateInvoiceScreen() {
         style={{ flex: 1 }}
       >
         {/* Header */}
-        <LinearGradient
-          colors={['#8B5CF6', '#7C3AED'] as const}
-          style={styles.header}
-        >
-          <View style={styles.headerContent}>
-            <TouchableOpacity 
-              onPress={() => navigation.goBack()}
-              style={styles.backButton}
-            >
-              <Feather name="x" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-            
-            <Text style={styles.headerTitle}>Create Invoice</Text>
-            
-            <TouchableOpacity
-              onPress={handleSubmit}
-              disabled={loading || !selectedClient}
-              style={styles.saveButton}
-            >
-              {loading ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <Text style={styles.saveButtonText}>Save</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </LinearGradient>
+       <LinearGradient
+  colors={['#8B5CF6', '#7C3AED'] as const}
+  style={styles.header}
+>
+  <View style={styles.headerContent}>
+    <TouchableOpacity 
+      onPress={() => navigation.goBack()}
+      style={styles.backButton}
+    >
+      <Feather name="x" size={24} color="#FFFFFF" />
+    </TouchableOpacity>
+    
+    <Text style={styles.headerTitle}>{isEditMode ? 'Edit Invoice' : 'Create Invoice'}</Text>
+    
+    <TouchableOpacity
+      onPress={() => navigation.navigate('InvoiceSettings' as any)}
+      style={styles.settingsButton}
+    >
+      <Feather name="settings" size={20} color="#FFFFFF" />
+    </TouchableOpacity>
+  </View>
+</LinearGradient>
 
         <ScrollView 
           style={styles.content}
@@ -560,11 +713,15 @@ export default function CreateInvoiceScreen() {
           <View style={styles.invoiceHeader}>
             <View style={styles.invoiceNumberSection}>
               <Text style={styles.label}>Invoice Number</Text>
-              <TextInput
-                style={styles.invoiceNumberInput}
+             <TextInput
+                style={[
+                  styles.invoiceNumberInput,
+                  isEditMode && { opacity: 0.6 }
+                ]}
                 value={invoiceNumber}
                 onChangeText={setInvoiceNumber}
                 placeholder="INV-0001"
+                editable={!isEditMode}
               />
             </View>
 
@@ -592,6 +749,23 @@ export default function CreateInvoiceScreen() {
                   <Text style={styles.dateText}>
                     {format(dueDate, 'MMM dd, yyyy')}
                   </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          
+            
+            {/* Currency Selection - ADD THIS INSIDE invoiceHeader */}
+            <View style={styles.currencySection}>
+              <Text style={styles.dateLabel}>CURRENCY</Text>
+              <TouchableOpacity
+                style={styles.currencySelector}
+                onPress={() => setShowCurrencyModal(true)}
+              >
+                <View style={styles.dateValue}>
+                  <Text style={styles.dateText}>
+                    {getCurrencySymbol(selectedCurrency)} {selectedCurrency}
+                  </Text>
+                  <Feather name="chevron-down" size={16} color="#6B7280" />
                 </View>
               </TouchableOpacity>
             </View>
@@ -664,7 +838,7 @@ export default function CreateInvoiceScreen() {
                   <View style={styles.itemField}>
                     <Text style={styles.itemFieldLabel}>Rate</Text>
                     <View style={styles.rateInputContainer}>
-                      <Text style={styles.currencySymbol}>{currencySymbol}</Text>
+                      <Text style={styles.currencySymbol}>{getCurrencySymbol(selectedCurrency)}</Text>
                       <TextInput
                         style={styles.rateInput}
                         placeholder="0.00"
@@ -675,10 +849,45 @@ export default function CreateInvoiceScreen() {
                     </View>
                   </View>
 
+                 {requiresLineItemVAT && (
+                      <View style={styles.itemField}>
+                        <Text style={styles.itemFieldLabel}>{taxLabel}</Text>
+                        <TouchableOpacity
+                          style={styles.vatDropdown}
+                          onPress={() => {
+                            // Show picker or modal for tax rate selection
+                            Alert.alert(
+                              'Select ' + taxLabel + ' Rate',
+                              '',
+                              [
+                                { text: 'No ' + taxLabel + ' (0%)', onPress: () => updateItem(index, 'tax_rate', 0) },
+                                ...taxRateOptions.map(tax => ({
+                                  text: `${tax.name} (${tax.rate}%)`,
+                                  onPress: () => updateItem(index, 'tax_rate', tax.rate)
+                                })),
+                                { text: 'Cancel', style: 'cancel' }
+                              ]
+                            );
+                          }}
+                        >
+                          <Text style={styles.vatDropdownText}>
+                            {item.tax_rate || 0}%
+                          </Text>
+                          <Feather name="chevron-down" size={12} color="#6B7280" />
+                        </TouchableOpacity>
+                      </View>
+                    )}
+
                   <View style={styles.itemField}>
-                    <Text style={styles.itemFieldLabel}>Amount</Text>
+                    <Text style={styles.itemFieldLabel}>
+                      {requiresLineItemVAT ? 'Total' : 'Amount'}
+                    </Text>
                     <Text style={styles.itemAmount}>
-                      {formatCurrency(item.amount)}
+                      {getCurrencySymbol(selectedCurrency)} {' '}
+                      {requiresLineItemVAT 
+                        ? (item.gross_amount || 0).toFixed(2)
+                        : item.amount.toFixed(2)
+                      }
                     </Text>
                   </View>
                 </View>
@@ -686,8 +895,8 @@ export default function CreateInvoiceScreen() {
             ))}
           </View>
 
-          {/* Template Section */}
-          {templates.length > 0 && (
+         {/* Template Section */}
+          {!isEditMode && templates.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Use Template</Text>
               <ScrollView 
@@ -778,19 +987,53 @@ export default function CreateInvoiceScreen() {
             )}
           </View>
 
-          {/* Tax Section */}
-          <View style={styles.section}>
-            <View style={styles.taxSection}>
-              <Text style={styles.sectionTitle}>Tax Rate (%)</Text>
-              <TextInput
-                style={styles.taxInput}
-                placeholder="0"
-                value={taxRate.toString()}
-                onChangeText={(text) => setTaxRate(parseFloat(text) || 0)}
-                keyboardType="decimal-pad"
-              />
-            </View>
-          </View>
+          {/* Tax Section - Only for non-VAT countries */}
+            {!requiresLineItemVAT && (
+              <View style={styles.section}>
+                <View style={styles.taxSection}>
+                  <Text style={styles.sectionTitle}>{taxLabel} Rate</Text>
+                  <ScrollView 
+                    horizontal 
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.categorySelector}
+                  >
+                    <TouchableOpacity
+                      style={[
+                        styles.categoryChip,
+                        taxRate === 0 && styles.categoryChipSelected
+                      ]}
+                      onPress={() => setTaxRate(0)}
+                    >
+                      <Text style={[
+                        styles.categoryChipText,
+                        taxRate === 0 && styles.categoryChipTextSelected
+                      ]}>
+                        No {taxLabel} (0%)
+                      </Text>
+                    </TouchableOpacity>
+                    
+                    {taxRateOptions.map((tax) => (
+                      <TouchableOpacity
+                        key={tax.id}
+                        style={[
+                          styles.categoryChip,
+                          taxRate === tax.rate && styles.categoryChipSelected
+                        ]}
+                        onPress={() => setTaxRate(tax.rate)}
+                      >
+                        <Text style={[
+                          styles.categoryChipText,
+                          taxRate === tax.rate && styles.categoryChipTextSelected
+                        ]}>
+                          {tax.name} ({tax.rate}%)
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              </View>
+            )}
+          
 
           {/* Notes Section */}
           <View style={styles.section}>
@@ -864,24 +1107,65 @@ export default function CreateInvoiceScreen() {
           <View style={styles.totalsSummary}>
             <View style={styles.totalRow}>
               <Text style={styles.totalLabel}>Subtotal</Text>
-              <Text style={styles.totalValue}>{formatCurrency(subtotal)}</Text>
+              <Text style={styles.totalValue}>
+                {getCurrencySymbol(selectedCurrency)} {subtotal.toFixed(2)}
+              </Text>
             </View>
-            
-            {taxRate > 0 && (
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Tax ({taxRate}%)</Text>
-                <Text style={styles.totalValue}>{formatCurrency(taxAmount)}</Text>
-              </View>
-            )}
+
+            {/* VAT Breakdown for UK/EU users */}
+              {requiresLineItemVAT && (() => {
+                const totals = calculateTotals();
+                if (!totals.vatBreakdown) return null;
+                
+                return Object.entries(totals.vatBreakdown).map(([rate, data]: [string, any]) => (
+                  data.vat > 0 ? (
+                    <View key={rate} style={styles.totalRow}>
+                      <Text style={styles.totalLabel}>{taxLabel} @ {rate}%</Text>
+                      <Text style={styles.totalValue}>
+                        {getCurrencySymbol(selectedCurrency)} {data.vat.toFixed(2)}
+                      </Text>
+                    </View>
+                  ) : null
+                ));
+              })()}
+                        
+            {/* Only show tax row for non-VAT countries or if VAT countries have tax */}
+              {!requiresLineItemVAT && taxRate > 0 && (
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>{taxLabel} ({taxRate}%)</Text>
+                  <Text style={styles.totalValue}>
+                    {getCurrencySymbol(selectedCurrency)} {taxAmount.toFixed(2)}
+                  </Text>
+                </View>
+              )}
+
+              {/* For VAT countries, show tax total if there's any VAT */}
+              {requiresLineItemVAT && taxAmount > 0 && (
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>{taxLabel} Total</Text>
+                  <Text style={styles.totalValue}>
+                    {getCurrencySymbol(selectedCurrency)} {taxAmount.toFixed(2)}
+                  </Text>
+                </View>
+              )}
             
             <View style={[styles.totalRow, styles.grandTotalRow]}>
-              <Text style={styles.grandTotalLabel}>Total</Text>
-              <Text style={styles.grandTotalValue}>{formatCurrency(total)}</Text>
+            <Text style={styles.grandTotalLabel}>Total</Text>
+            <View style={styles.totalValueContainer}>
+              <Text style={styles.grandTotalValue}>
+                {getCurrencySymbol(selectedCurrency)} {total.toFixed(2)}
+              </Text>
+              {selectedCurrency !== baseCurrency && (
+                <Text style={styles.conversionNote}>
+                  ≈ {formatCurrency(total / (exchangeRate || 1))} base
+                </Text>
+              )}
             </View>
+          </View>
           </View>
 
           {/* Save as Template Option */}
-          {!selectedTemplate && (
+          {!isEditMode && !selectedTemplate && (
             <View style={styles.section}>
               <TouchableOpacity
                 style={styles.saveTemplateToggle}
@@ -909,7 +1193,7 @@ export default function CreateInvoiceScreen() {
           {/* Submit Button */}
           <View style={styles.submitSection}>
             <Button
-              title="Create Invoice"
+              title={isEditMode ? "Update Invoice" : "Create Invoice"}
               onPress={handleSubmit}
               loading={loading}
               disabled={loading || !selectedClient || items.some(item => !item.description)}
@@ -1018,11 +1302,50 @@ export default function CreateInvoiceScreen() {
           />
         )}
       </KeyboardAvoidingView>
+      {/* Currency Selection Modal */}
+      {showCurrencyModal && (
+        <TouchableOpacity 
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowCurrencyModal(false)}
+        >
+          <View style={[styles.modalContent, { maxHeight: '50%' }]}>
+            <Text style={styles.modalTitle}>Select Currency</Text>
+            <ScrollView style={styles.clientList}>
+              {enabledCurrencies?.map((currency: string) => (
+                <TouchableOpacity
+                  key={currency}
+                  style={[
+                    styles.clientItem,
+                    selectedCurrency === currency && styles.clientItemSelected
+                  ]}
+                  onPress={() => {
+                    setSelectedCurrency(currency);
+                    setShowCurrencyModal(false);
+                  }}
+                >
+                  <View>
+                    <Text style={styles.clientItemName}>
+                      {getCurrencySymbol(currency)} {currency}
+                    </Text>
+                  </View>
+                  {selectedCurrency === currency && (
+                    <Feather name="check" size={20} color="#8B5CF6" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      )}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  currencySection: {
+  marginTop: Spacing.md,
+},
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
@@ -1103,7 +1426,27 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     textTransform: 'uppercase',
   },
+  
+  totalValueContainer: {
+    alignItems: 'flex-end',
+  },
+  conversionNote: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
   dateValue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    backgroundColor: '#F9FAFB',
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  currencySelector: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -1220,6 +1563,21 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     marginBottom: Spacing.sm,
     minHeight: 60,
+    },
+    vatDropdown: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  vatDropdownText: {
+    fontSize: 12,
+    color: '#1F2937',
   },
   itemDetailsRow: {
     flexDirection: 'row',
@@ -1289,6 +1647,10 @@ const styles = StyleSheet.create({
     width: 80,
     textAlign: 'center',
   },
+  settingsButton: {
+  padding: Spacing.sm,
+  marginRight: -Spacing.sm,
+},
   notesInput: {
     fontSize: 14,
     color: '#1F2937',

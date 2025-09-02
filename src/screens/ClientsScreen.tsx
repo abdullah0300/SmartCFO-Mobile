@@ -15,13 +15,16 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
-
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../../App';
 import { useAuth } from '../hooks/useAuth';
 import { getClients, supabase } from '../services/api';
 import { Colors, Spacing, Typography, BorderRadius } from '../constants/Colors';
 import { Client } from '../types';
 import { AddClientModal } from '../components/clients/AddClientModal';
 import { EditClientModal } from '../components/clients/EditClientModal';
+
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const ClientItem = ({ 
   item, 
@@ -89,13 +92,13 @@ const ClientItem = ({
 
 export default function ClientsScreen() {
   const { user } = useAuth();
-  const navigation = useNavigation();
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+const navigation = useNavigation<NavigationProp>();
 
   const { data: clients, isLoading, refetch } = useQuery({
     queryKey: ['clients', user?.id],
@@ -144,8 +147,7 @@ export default function ClientsScreen() {
   };
 
   const handleClientPress = (client: Client) => {
-    // Navigate to client details (invoices, income, etc.)
-    Alert.alert('Coming Soon', 'Client details screen');
+  navigation.navigate('ClientDetail', { clientId: client.id });
   };
 
   const filteredClients = clients?.filter(client =>

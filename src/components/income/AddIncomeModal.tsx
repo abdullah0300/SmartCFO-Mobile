@@ -37,7 +37,7 @@ export const AddIncomeModal: React.FC<AddIncomeModalProps> = ({
   onClose,
 }) => {
   const { user } = useAuth();
-  const { currencySymbol, formatCurrency } = useSettings();
+  const { currencySymbol, formatCurrency, baseCurrency, isUKBusiness, convertToBaseCurrency, getCurrencySymbol, enabledCurrencies, taxRates } = useSettings();
   const queryClient = useQueryClient();
 
   const [amount, setAmount] = useState("");
@@ -50,6 +50,25 @@ export const AddIncomeModal: React.FC<AddIncomeModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [taxRate, setTaxRate] = useState("0");
   const [includeTax, setIncludeTax] = useState(false);
+  const [currency, setCurrency] = useState(baseCurrency);
+  const [showCurrencySelector, setShowCurrencySelector] = useState(false);
+  const [convertedPreview, setConvertedPreview] = useState(0);
+
+  const [availableCurrencies, setAvailableCurrencies] = useState<Array<{code: string, symbol: string, name: string}>>([]);
+
+    const CURRENCY_NAMES: Record<string, string> = {
+      USD: 'US Dollar',
+      EUR: 'Euro',
+      GBP: 'British Pound',
+      PKR: 'Pakistani Rupee',
+      INR: 'Indian Rupee',
+      AUD: 'Australian Dollar',
+      CAD: 'Canadian Dollar',
+      JPY: 'Japanese Yen',
+      CNY: 'Chinese Yuan',
+      AED: 'UAE Dirham',
+      SAR: 'Saudi Riyal',
+    };
 
   // Quick add modal states
   const [showAddClient, setShowAddClient] = useState(false);
@@ -104,6 +123,7 @@ export const AddIncomeModal: React.FC<AddIncomeModalProps> = ({
     setReferenceNumber("");
     setTaxRate("0");
     setIncludeTax(false);
+    setCurrency(baseCurrency);
   };
 
   // In AddIncomeModal.tsx - Replace the handleSubmit function:
@@ -114,13 +134,17 @@ const handleSubmit = async () => {
   setLoading(true);
   
   try {
-    const baseAmount = parseFloat(amount); // This is ALWAYS the base amount
+    const amountNum = parseFloat(amount);
     const taxRateNum = includeTax ? (parseFloat(taxRate) || 0) : 0;
-    const taxAmountCalc = taxRateNum > 0 ? (baseAmount * taxRateNum) / 100 : 0;
+    const taxAmountCalc = taxRateNum > 0 ? (amountNum * taxRateNum) / 100 : 0;
+
+    // Convert to base currency
+    const { baseAmount, exchangeRate } = await convertToBaseCurrency(amountNum, currency);
+    const baseTaxAmount = taxRateNum > 0 ? (baseAmount * taxRateNum) / 100 : 0;
 
     const incomeData: any = {
       user_id: user.id,
-      amount: baseAmount, // Always store base amount
+      amount: amountNum,
       description,
       category_id: selectedCategory || null,
       date: format(selectedDate, "yyyy-MM-dd"),
@@ -128,7 +152,9 @@ const handleSubmit = async () => {
       client_id: selectedClient || null,
       tax_rate: taxRateNum || null,
       tax_amount: taxAmountCalc || null,
-      // Don't send total_with_tax - it's auto-calculated by database
+      currency: currency,
+      base_amount: baseAmount,
+      exchange_rate: exchangeRate,
     };
 
     await createMutation.mutateAsync(incomeData);
@@ -140,44 +166,7 @@ const handleSubmit = async () => {
   }
 };
 
-// And update the tax display section to be clearer:
-{includeTax && (
-  <View style={styles.taxSection}>
-    <Text style={styles.inputLabel}>Tax Rate (%)</Text>
-    <View style={styles.taxInputContainer}>
-      <TextInput
-        style={styles.taxInput}
-        placeholder="0"
-        value={taxRate}
-        onChangeText={setTaxRate}
-        keyboardType="decimal-pad"
-      />
-      <Text style={styles.taxPercent}>%</Text>
-    </View>
-    {parseFloat(taxRate) > 0 && parseFloat(amount) > 0 && (
-      <View style={styles.taxCalculation}>
-        <View style={styles.taxCalcRow}>
-          <Text style={styles.taxCalcLabel}>Base Amount:</Text>
-          <Text style={styles.taxCalcValue}>
-            {formatCurrency(parseFloat(amount))}
-          </Text>
-        </View>
-        <View style={styles.taxCalcRow}>
-          <Text style={styles.taxCalcLabel}>Tax ({taxRate}%):</Text>
-          <Text style={styles.taxCalcValue}>
-            {formatCurrency(parseFloat(amount) * parseFloat(taxRate) / 100)}
-          </Text>
-        </View>
-        <View style={[styles.taxCalcRow, styles.taxCalcTotal]}>
-          <Text style={styles.taxCalcTotalLabel}>Total:</Text>
-          <Text style={styles.taxCalcTotalValue}>
-            {formatCurrency(parseFloat(amount) * (1 + parseFloat(taxRate) / 100))}
-          </Text>
-        </View>
-      </View>
-    )}
-  </View>
-)}
+
 
   const handleQuickAddClient = async () => {
     if (!newClientData.name.trim() || !user) return;
@@ -242,6 +231,27 @@ const handleSubmit = async () => {
       refetchClients();
     }
   }, [visible]);
+  // Load enabled currencies from settings
+React.useEffect(() => {
+  if (visible && enabledCurrencies) {
+    const currencies = enabledCurrencies.map(code => ({
+      code,
+      symbol: getCurrencySymbol(code),
+      name: CURRENCY_NAMES[code] || code
+    }));
+    setAvailableCurrencies(currencies);
+    setCurrency(baseCurrency);
+  }
+}, [visible, enabledCurrencies, baseCurrency, getCurrencySymbol]);
+React.useEffect(() => {
+  if (currency !== baseCurrency && amount) {
+    convertToBaseCurrency(parseFloat(amount || '0'), currency)
+      .then(({ baseAmount }) => setConvertedPreview(baseAmount))
+      .catch(() => setConvertedPreview(0));
+  } else {
+    setConvertedPreview(0);
+  }
+}, [amount, currency, baseCurrency]);
 
   return (
     <>
@@ -261,17 +271,35 @@ const handleSubmit = async () => {
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false}>
-              {/* Amount Input */}
-              <View style={styles.amountInputContainer}>
-                <Text style={styles.currencySymbol}>{currencySymbol}</Text>
-                <TextInput
-                  style={styles.amountInput}
-                  placeholder="0.00"
-                  placeholderTextColor={Colors.light.textTertiary}
-                  value={amount}
-                  onChangeText={setAmount}
-                  keyboardType="decimal-pad"
-                />
+              {/* Amount Input with Currency Selector */}
+              <View style={styles.amountSection}>
+                <Text style={styles.inputLabel}>Amount</Text>
+                <View style={styles.amountRow}>
+                  <TouchableOpacity 
+                    style={styles.currencySelector}
+                    onPress={() => setShowCurrencySelector(true)}
+                  >
+                    <Text style={styles.currencySelectorText}>
+                      {getCurrencySymbol(currency)} {currency}
+                    </Text>
+                    <Feather name="chevron-down" size={16} color={Colors.light.textSecondary} />
+                  </TouchableOpacity>
+                  <View style={styles.amountInputContainer}>
+                    <TextInput
+                      style={styles.amountInput}
+                      placeholder="0.00"
+                      placeholderTextColor={Colors.light.textTertiary}
+                      value={amount}
+                      onChangeText={setAmount}
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+                </View>
+                {currency !== baseCurrency && amount && convertedPreview > 0 && (
+                  <Text style={styles.conversionNote}>
+                    ≈ {formatCurrency(convertedPreview)} (will be converted at current rate)
+                  </Text>
+                )}
               </View>
 
               {/* Description */}
@@ -284,43 +312,89 @@ const handleSubmit = async () => {
               />
 
               {/* Tax Section */}
-              <TouchableOpacity
-                style={styles.taxToggle}
-                onPress={() => setIncludeTax(!includeTax)}
-              >
-                <MaterialIcons 
-                  name={includeTax ? "check-box" : "check-box-outline-blank"} 
-                  size={24} 
-                  color="#10B981" 
-                />
-                <Text style={styles.taxToggleText}>Apply Tax</Text>
-              </TouchableOpacity>
-
-              {includeTax && (
-                <View style={styles.taxSection}>
-                  <Text style={styles.inputLabel}>Tax Rate (%)</Text>
-                  <View style={styles.taxInputContainer}>
-                    <TextInput
-                      style={styles.taxInput}
-                      placeholder="0"
-                      value={taxRate}
-                      onChangeText={setTaxRate}
-                      keyboardType="decimal-pad"
-                    />
-                    <Text style={styles.taxPercent}>%</Text>
+                <TouchableOpacity
+                  style={styles.taxToggle}
+                  onPress={() => setIncludeTax(!includeTax)}
+                >
+                  <MaterialIcons 
+                    name={includeTax ? "check-box" : "check-box-outline-blank"} 
+                    size={24} 
+                    color="#10B981" 
+                  />
+                  <Text style={styles.taxToggleText}>
+                    {isUKBusiness ? 'Apply VAT' : 'Apply Tax'}
+                    
+                  </Text> 
+                </TouchableOpacity>
+                
+                {includeTax && (
+                  <View style={styles.taxSection}>
+                    <Text style={styles.inputLabel}>{isUKBusiness ? 'VAT Rate' : 'Tax Rate'}</Text>
+                    
+                    {/* Show saved tax rates as buttons */}
+                    {taxRates && Object.keys(taxRates).length > 0 ? (
+                      <View style={styles.taxRateButtons}>
+                        {Object.entries(taxRates).map(([name, rate]) => (
+                          <TouchableOpacity
+                            key={name}
+                            style={[
+                              styles.taxRateButton,
+                              taxRate === String(rate) && styles.taxRateButtonSelected
+                            ]}
+                            onPress={() => setTaxRate(String(rate))}
+                          >
+                            <Text style={[
+                              styles.taxRateButtonText,
+                              taxRate === String(rate) && styles.taxRateButtonTextSelected
+                            ]}>
+                              {name}
+                            </Text>
+                            <Text style={[
+                              styles.taxRatePercent,
+                              taxRate === String(rate) && styles.taxRatePercentSelected
+                            ]}>
+                              {rate}%
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                        <TouchableOpacity
+                          style={[
+                            styles.taxRateButton,
+                            !Object.values(taxRates).includes(Number(taxRate)) && taxRate !== "0" && styles.taxRateButtonSelected
+                          ]}
+                          onPress={() => setTaxRate("0")}
+                        >
+                          <Text style={styles.taxRateButtonText}>Custom</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                    
+                    {/* Show input for custom rate or if no saved rates */}
+                    {(!taxRates || Object.keys(taxRates).length === 0 || !Object.values(taxRates).includes(Number(taxRate))) && (
+                      <View style={styles.taxInputContainer}>
+                        <TextInput
+                          style={styles.taxInput}
+                          placeholder="0"
+                          value={taxRate}
+                          onChangeText={setTaxRate}
+                          keyboardType="decimal-pad"
+                        />
+                        <Text style={styles.taxPercent}>%</Text>
+                      </View>
+                    )}
+                    
+                    {parseFloat(taxRate) > 0 && parseFloat(amount) > 0 && (
+                      <View style={styles.taxCalculation}>
+                        <Text style={styles.taxCalcText}>
+                          Tax: {formatCurrency(parseFloat(amount) * parseFloat(taxRate) / 100)}
+                        </Text>
+                        <Text style={styles.taxCalcText}>
+                          Total: {formatCurrency(parseFloat(amount) * (1 + parseFloat(taxRate) / 100))}
+                        </Text>
+                      </View>
+                    )}
                   </View>
-                  {parseFloat(taxRate) > 0 && parseFloat(amount) > 0 && (
-                    <View style={styles.taxCalculation}>
-                      <Text style={styles.taxCalcText}>
-                        Tax: {formatCurrency(parseFloat(amount) * parseFloat(taxRate) / 100)}
-                      </Text>
-                      <Text style={styles.taxCalcText}>
-                        Total: {formatCurrency(parseFloat(amount) * (1 + parseFloat(taxRate) / 100))}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              )}
+                )}
 
               {/* Date Picker */}
               <TouchableOpacity
@@ -636,8 +710,51 @@ const handleSubmit = async () => {
           </View>
         </View>
       </Modal>
+      {/* Currency Selector Modal */}
+      <Modal
+        visible={showCurrencySelector}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setShowCurrencySelector(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowCurrencySelector(false)}
+        >
+          <View style={styles.currencyModalContent}>
+            <Text style={styles.currencyModalTitle}>Select Currency</Text>
+            {availableCurrencies.map((curr) => (
+              <TouchableOpacity
+                key={curr.code}
+                style={[
+                  styles.currencyOption,
+                  currency === curr.code && styles.currencyOptionSelected
+                ]}
+                onPress={() => {
+                  setCurrency(curr.code);
+                  setShowCurrencySelector(false);
+                }}
+              >
+                <View style={styles.currencyOptionLeft}>
+                  <Text style={styles.currencySymbolDisplay}>{curr.symbol}</Text>
+                  <View>
+                    <Text style={styles.currencyCode}>{curr.code}</Text>
+                    <Text style={styles.currencyName}>{curr.name}</Text>
+                  </View>
+                </View>
+                {currency === curr.code && (
+                  <Feather name="check" size={20} color="#10B981" />
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </>
+    
   );
+  
 };
 
 const styles = StyleSheet.create({
@@ -703,7 +820,42 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     color: "#10B981",
   },
-  
+  taxRateButtons: {
+  flexDirection: 'row',
+  flexWrap: 'wrap',
+  gap: Spacing.sm,
+  marginBottom: Spacing.sm,
+},
+taxRateButton: {
+  paddingVertical: Spacing.sm,
+  paddingHorizontal: Spacing.md,
+  backgroundColor: Colors.light.backgroundSecondary,
+  borderRadius: BorderRadius.md,
+  borderWidth: 1.5,
+  borderColor: Colors.light.border,
+  minWidth: 80,
+  alignItems: 'center',
+},
+taxRateButtonSelected: {
+  backgroundColor: '#10B981' + '15',
+  borderColor: '#10B981',
+},
+taxRateButtonText: {
+  fontSize: 13,
+  color: Colors.light.text,
+  fontWeight: '500',
+},
+taxRateButtonTextSelected: {
+  color: '#10B981',
+  fontWeight: '600',
+},
+taxRatePercent: {
+  fontSize: 11,
+  color: Colors.light.textSecondary,
+},
+taxRatePercentSelected: {
+  color: '#10B981',
+},
   // Quick modal styles
   quickModalOverlay: {
     flex: 1,
@@ -829,6 +981,17 @@ taxCalcValue: {
   color: Colors.light.text,
   fontWeight: '500',
 },
+amountInputContainer: {
+  flex: 1,
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#F9FAFB',
+  borderRadius: BorderRadius.lg,
+  paddingHorizontal: Spacing.md,
+  height: 56,
+  borderWidth: 1.5,
+  borderColor: '#E5E7EB',
+},
 taxCalcTotal: {
   borderTopWidth: 1,
   borderTopColor: Colors.light.border,
@@ -845,6 +1008,81 @@ taxCalcTotalValue: {
   color: '#10B981',
   fontWeight: '700',
 },
+amountSection: {
+    marginBottom: Spacing.md,
+  },
+  amountRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  currencySelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    backgroundColor: Colors.light.backgroundSecondary,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1.5,
+    borderColor: Colors.light.border,
+    minWidth: 110,
+  },
+  currencySelectorText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.light.text,
+  },
+  conversionNote: {
+    fontSize: 12,
+    color: Colors.light.textSecondary,
+    marginTop: Spacing.xs,
+    fontStyle: 'italic',
+  },
+  currencyModalContent: {
+    backgroundColor: Colors.light.background,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.lg,
+    margin: Spacing.xl,
+    maxHeight: '70%',
+  },
+  currencyModalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: Colors.light.text,
+    marginBottom: Spacing.md,
+  },
+  currencyOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.border,
+  },
+  currencyOptionSelected: {
+    backgroundColor: '#10B981' + '10',
+  },
+  currencyOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  currencySymbolDisplay: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: Colors.light.text,
+    width: 30,
+  },
+  currencyCode: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.light.text,
+  },
+  currencyName: {
+    fontSize: 13,
+    color: Colors.light.textSecondary,
+  },
   categoryChipSelected: {
     backgroundColor: Colors.light.primary + '15',
     borderColor: Colors.light.primary,
@@ -893,17 +1131,7 @@ taxCalcTotalValue: {
     color: '#10B981',
     fontWeight: '600',
   },
-  amountInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderRadius: BorderRadius.lg,
-    paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.md,
-    height: 64,
-    borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-  },
+
   currencySymbol: {
     fontSize: 28,
     fontWeight: '600',

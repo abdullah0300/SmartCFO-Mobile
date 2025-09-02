@@ -36,7 +36,7 @@ export const IncomeDetailModal: React.FC<IncomeDetailModalProps> = ({
   onClose,
   onEdit,
 }) => {
-  const { formatCurrency } = useSettings();
+  const { formatCurrency, getCurrencySymbol, baseCurrency } = useSettings();
   const queryClient = useQueryClient();
 
   const deleteMutation = useMutation({
@@ -69,11 +69,13 @@ export const IncomeDetailModal: React.FC<IncomeDetailModalProps> = ({
   if (!income) return null;
 
   // Display values
-  const baseAmount = income.amount;
-  const taxAmount = income.tax_amount || 0;
-  const taxRate = income.tax_rate || 0;
-  const totalAmount = baseAmount + taxAmount;
-  const hasTax = taxRate > 0;
+    const baseAmount = income.amount;
+    const taxAmount = income.tax_amount || 0;
+    const taxRate = income.tax_rate || 0;
+    const totalAmount = baseAmount + taxAmount;
+    const hasTax = taxRate > 0;
+    const currency = income.currency || 'USD';
+    const isBaseCurrency = !income.currency || income.currency === baseCurrency;
 
   return (
     <Modal
@@ -96,19 +98,33 @@ export const IncomeDetailModal: React.FC<IncomeDetailModalProps> = ({
             <View style={styles.amountSection}>
               <Text style={styles.amountLabel}>Total Received</Text>
               <Text style={styles.amountValue}>
-                {formatCurrency(totalAmount)}
+                {getCurrencySymbol(currency)} {totalAmount.toFixed(2)}
               </Text>
+              {currency && (
+                <Text style={styles.currencyCode}>{currency}</Text>
+              )}
+              
+              {/* Show conversion if not base currency */}
+              {!isBaseCurrency && income.base_amount && (
+                <Text style={styles.conversionText}>
+                  ≈ {formatCurrency(income.base_amount + (income.base_amount * taxRate / 100))} base currency
+                </Text>
+              )}
               
               {/* Show breakdown if tax exists */}
               {hasTax && (
                 <View style={styles.amountBreakdown}>
                   <View style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>Base Amount:</Text>
-                    <Text style={styles.breakdownValue}>{formatCurrency(baseAmount)}</Text>
+                    <Text style={styles.breakdownValue}>
+                      {getCurrencySymbol(currency)} {baseAmount.toFixed(2)}
+                    </Text>
                   </View>
                   <View style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>Tax ({taxRate}%):</Text>
-                    <Text style={styles.breakdownValue}>{formatCurrency(taxAmount)}</Text>
+                    <Text style={styles.breakdownValue}>
+                      {getCurrencySymbol(currency)} {taxAmount.toFixed(2)}
+                    </Text>
                   </View>
                 </View>
               )}
@@ -130,7 +146,25 @@ export const IncomeDetailModal: React.FC<IncomeDetailModalProps> = ({
                   </Text>
                 </View>
               </View>
-
+              {/* Currency */}
+                {currency && (
+                  <View style={styles.detailItem}>
+                    <Feather
+                      name="dollar-sign"
+                      size={20}
+                      color={Colors.light.textSecondary}
+                    />
+                    <View style={styles.detailText}>
+                      <Text style={styles.detailLabel}>Currency</Text>
+                      <Text style={styles.detailValue}>
+                        {currency}
+                        {income.exchange_rate && income.exchange_rate !== 1 && (
+                          <Text style={styles.exchangeRate}> (Rate: {income.exchange_rate.toFixed(4)})</Text>
+                        )}
+                      </Text>
+                    </View>
+                  </View>
+                )}
               {/* Category */}
               <View style={styles.detailItem}>
                 <Feather
@@ -231,6 +265,23 @@ const styles = StyleSheet.create({
     padding: Spacing.lg,
     borderBottomWidth: 1,
     borderBottomColor: Colors.light.border,
+  },
+  currencyCode: {
+  fontSize: 14,
+  color: Colors.light.textSecondary,
+  fontWeight: '600',
+  marginTop: 2,
+  },
+  conversionText: {
+    fontSize: 12,
+    color: Colors.light.textSecondary,
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+  exchangeRate: {
+    fontSize: 12,
+    color: Colors.light.textSecondary,
+    fontWeight: '400',
   },
   modalTitle: {
     ...Typography.title3,

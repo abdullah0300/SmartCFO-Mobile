@@ -38,20 +38,34 @@ import { SettingsProvider } from './src/contexts/SettingsContext';
 import { TabBar } from './src/components/navigation/TabBar';
 import { FloatingActionBar } from './src/components/common/FloatingActionBar'; // ADD THIS LINE
 import { Colors } from './src/constants/Colors';
+import InvoiceSettingsScreen from './src/screens/InvoiceSettingsScreen';
+import RecurringInvoiceEditScreen from './src/screens/RecurringInvoiceEditScreen';
+import ClientDetailScreen from './src/screens/ClientDetailScreen';
+import BudgetScreen from './src/screens/BudgetScreen';
+import ReportsOverviewScreen from './src/screens/ReportsOverviewScreen';
 
 // Type definitions for navigation
 export type RootStackParamList = {
   Main: undefined;
   Login: undefined;
   InvoiceView: { invoiceId: string };
-  CreateInvoice: undefined;
-  EditInvoice: { invoiceId: string };
+  CreateInvoice: { 
+    invoiceId?: string;
+    recurringId?: string;
+    templateData?: any;
+    clientId?: string;
+  } | undefined;
   RecurringInvoices: undefined;
+  RecurringInvoiceEdit: { recurringId: string }; // ADD THIS LINE
   Clients: undefined;
+  ClientDetail: { clientId: string };
+  Budget: undefined;
   Categories: undefined;
   Vendors: undefined;
-   TransactionDetail: { transactionId: string; type: 'income' | 'expense' };
+  ReportsOverview: undefined;
+  TransactionDetail: { transactionId: string; type: 'income' | 'expense' };
   EditTransaction: { transactionId: string; type: 'income' | 'expense' };
+  InvoiceSettings: undefined;
 };
 
 export type TabParamList = {
@@ -131,14 +145,15 @@ function AuthNavigator() {
             component={RecurringInvoicesScreen}
             options={{ headerShown: false }}
           />
-          {/* <Stack.Screen 
-            name="EditInvoice" 
-            component={EditInvoiceScreen || PlaceholderScreen}
+          <Stack.Screen 
+            name="RecurringInvoiceEdit" 
+            component={RecurringInvoiceEditScreen}
             options={{ 
+              headerShown: false,
               animation: 'slide_from_right',
-              presentation: 'card' 
+              presentation: 'card'
             }}
-          /> */}
+          />
           <Stack.Screen 
             name="Clients" 
             component={ClientsScreen}
@@ -147,6 +162,29 @@ function AuthNavigator() {
               presentation: 'card' 
             }}
           />
+          <Stack.Screen 
+            name="ClientDetail" 
+            component={ClientDetailScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen 
+              name="Budget" 
+              component={BudgetScreen}
+              options={{ 
+                headerShown: false,
+                animation: 'slide_from_right',
+                presentation: 'card'
+              }}
+            />
+            <Stack.Screen 
+              name="ReportsOverview" 
+              component={ReportsOverviewScreen}
+              options={{ 
+                headerShown: false,
+                animation: 'slide_from_right',
+                presentation: 'card'
+              }}
+            />
           <Stack.Screen 
             name="Categories" 
             component={CategoriesScreen || PlaceholderScreen}
@@ -164,13 +202,19 @@ function AuthNavigator() {
             }}
           />
           <Stack.Screen 
-  name="TransactionDetail" 
-  component={TransactionDetailScreen}
-  options={{ 
-    animation: 'slide_from_right',
-    presentation: 'card' 
-  }}
-/>
+            name="TransactionDetail" 
+            component={TransactionDetailScreen}
+            options={{ 
+              animation: 'slide_from_right',
+              presentation: 'card' 
+            }}
+          />
+
+          <Stack.Screen 
+            name="InvoiceSettings" 
+            component={InvoiceSettingsScreen}
+            options={{ headerShown: false }}
+          />
         </>
       ) : (
         <Stack.Screen name="Login" component={LoginScreen} />

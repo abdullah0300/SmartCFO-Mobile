@@ -15,13 +15,14 @@ import {
   Dimensions,
   TextInput, 
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Feather, MaterialIcons, Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-
+import * as SecureStore from 'expo-secure-store';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useBiometric } from '../../src/hooks/useBiometric';
 import { Button } from '../../src/components/ui/Button';
@@ -56,7 +57,7 @@ export default function LoginScreen() {
   const [enableBiometricOnLogin, setEnableBiometricOnLogin] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
-
+  const [storedEmail, setStoredEmail] = useState('');
   // Check for biometric login on mount
   useEffect(() => {
     if (!biometricLoading && isEnabled) {
@@ -65,6 +66,23 @@ export default function LoginScreen() {
       }, 500);
     }
   }, [biometricLoading, isEnabled]);
+
+  useFocusEffect(
+  React.useCallback(() => {
+    if (!biometricLoading && isEnabled) {
+      setTimeout(() => {
+        handleBiometricLogin();
+      }, 500);
+    }
+  }, [biometricLoading, isEnabled])
+);
+  useEffect(() => {
+  const getStoredEmail = async () => {
+    const email = await SecureStore.getItemAsync('user_email');
+    if (email) setStoredEmail(email);
+  };
+  getStoredEmail();
+}, []);
 
   const handleBiometricLogin = async () => {
     setLoading(true);
@@ -206,6 +224,9 @@ export default function LoginScreen() {
               {/* Biometric Login Button - Show if enabled */}
               {isEnabled && (
                 <>
+                  <Text style={styles.biometricAccountText}>
+                      Logging in as: {storedEmail}
+                    </Text>
                   <TouchableOpacity
                     style={styles.biometricMainButton}
                     onPress={handleBiometricLogin}
@@ -454,6 +475,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: 'rgba(255,255,255,0.8)',
   },
+  biometricAccountText: {
+  textAlign: 'center',
+  color: '#64748B',
+  fontSize: 14,
+  marginBottom: 12,
+},
   loginCard: {
     backgroundColor: 'rgba(255,255,255,0.95)',
     borderRadius: 24,

@@ -149,7 +149,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     // Disable biometric on sign out
-    await BiometricService.disable();
+   
     
     const { error } = await supabase.auth.signOut();
     if (error) throw error;

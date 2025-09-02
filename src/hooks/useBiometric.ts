@@ -29,7 +29,7 @@ export const useBiometric = () => {
   };
 
   const enableBiometric = async (email: string, password: string) => {
-    const success = await BiometricService.enable(email, password);
+    const success = await BiometricService.enable(email);
     if (success) {
       setIsEnabled(true);
     }

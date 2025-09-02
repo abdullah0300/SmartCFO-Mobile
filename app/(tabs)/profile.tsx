@@ -13,16 +13,19 @@ import {
   Linking,
   KeyboardAvoidingView,
   Platform,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Feather } from '@expo/vector-icons';
+import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
+import * as Haptics from 'expo-haptics';
+
 import { useAuth } from '../../src/hooks/useAuth';
+import { useBiometric } from '../../src/hooks/useBiometric';
 import { getProfile, updateProfile } from '../../src/services/api';
 import { Colors, Spacing, Typography, BorderRadius } from '../../src/constants/Colors';
-import * as Haptics from 'expo-haptics';
 
 interface ProfileData {
   id?: string;
@@ -42,6 +45,14 @@ interface FormData {
 
 export default function ProfileScreen() {
   const { user, signOut } = useAuth();
+  const { 
+    isAvailable: biometricAvailable, 
+    isEnabled: biometricEnabled, 
+    biometricType,
+    disableBiometric,
+    refreshStatus: refreshBiometricStatus
+  } = useBiometric();
+  
   const navigation = useNavigation();
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<FormData>({
@@ -69,6 +80,14 @@ export default function ProfileScreen() {
     }
   }, [profile]);
 
+  // Refresh biometric status when screen focuses
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      refreshBiometricStatus();
+    });
+    return unsubscribe;
+  }, [navigation, refreshBiometricStatus]);
+
   const updateMutation = useMutation({
     mutationFn: (data: FormData) => updateProfile(user!.id, data),
     onSuccess: () => {
@@ -95,13 +114,45 @@ export default function ProfileScreen() {
     );
   };
 
+  const handleBiometricToggle = () => {
+    if (biometricEnabled) {
+      Alert.alert(
+        `Disable ${biometricType}`,
+        `Are you sure you want to disable ${biometricType} login?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Disable', 
+            style: 'destructive',
+            onPress: async () => {
+              await disableBiometric();
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              Alert.alert('Success', `${biometricType} login has been disabled`);
+            }
+          }
+        ]
+      );
+    } else {
+      Alert.alert(
+        `Enable ${biometricType}`,
+        `To enable ${biometricType} login, please sign out and sign in again. You'll see the option to enable ${biometricType} during login.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Sign Out Now', 
+            onPress: handleSignOut
+          }
+        ]
+      );
+    }
+  };
+
   const handleSave = () => {
     updateMutation.mutate(formData);
   };
 
   const openDashboardSettings = () => {
-    // Replace with your web app URL
-    const dashboardUrl = 'https://your-webapp-domain.com/settings';
+    const dashboardUrl = 'https://smartcfo.webcraftio.com/settings/profile';
     Linking.openURL(dashboardUrl).catch((err) => 
       Alert.alert('Error', 'Could not open dashboard settings')
     );
@@ -118,41 +169,41 @@ export default function ProfileScreen() {
   }
 
   const ProfileField = ({ 
-  label, 
-  value, 
-  icon, 
-  field, 
-  editable = true 
-}: {
-  label: string;
-  value?: string;
-  icon: string;
-  field: keyof FormData | null;
-  editable?: boolean;
-}) => (
-  <View style={styles.fieldContainer}>
-    <View style={styles.fieldIcon}>
-      <Feather name={icon as any} size={20} color={Colors.light.textSecondary} />
+    label, 
+    value, 
+    icon, 
+    field, 
+    editable = true 
+  }: {
+    label: string;
+    value?: string;
+    icon: string;
+    field: keyof FormData | null;
+    editable?: boolean;
+  }) => (
+    <View style={styles.fieldContainer}>
+      <View style={styles.fieldIcon}>
+        <Feather name={icon as any} size={20} color={Colors.light.textSecondary} />
+      </View>
+      <View style={styles.fieldContent}>
+        <Text style={styles.fieldLabel}>{label}</Text>
+        {isEditing && editable && field !== null ? (
+          <TextInput
+            style={styles.fieldInput}
+            value={formData[field]}
+            onChangeText={(text) => setFormData(prev => ({ ...prev, [field]: text }))}
+            placeholder={`Enter ${label.toLowerCase()}`}
+            placeholderTextColor={Colors.light.textTertiary}
+            autoCorrect={false}
+            autoCapitalize="none"
+            returnKeyType="done"
+          />
+        ) : (
+          <Text style={styles.fieldValue}>{value || 'Not set'}</Text>
+        )}
+      </View>
     </View>
-    <View style={styles.fieldContent}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      {isEditing && editable && field !== null ? (
-        <TextInput
-          style={styles.fieldInput}
-          value={formData[field]}
-          onChangeText={(text) => setFormData(prev => ({ ...prev, [field]: text }))}
-          placeholder={`Enter ${label.toLowerCase()}`}
-          placeholderTextColor={Colors.light.textTertiary}
-          autoCorrect={false}
-          autoCapitalize="none"
-          returnKeyType="done"
-        />
-      ) : (
-        <Text style={styles.fieldValue}>{value || 'Not set'}</Text>
-      )}
-    </View>
-  </View>
-);
+  );
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -235,12 +286,12 @@ export default function ProfileScreen() {
               field="full_name"
             />
             <ProfileField
-  label="Email"
-  value={user?.email}
-  icon="mail"
-  field={null}
-  editable={false}
-/>
+              label="Email"
+              value={user?.email}
+              icon="mail"
+              field={null}
+              editable={false}
+            />
             <ProfileField
               label="Phone"
               value={profile?.phone}
@@ -266,6 +317,67 @@ export default function ProfileScreen() {
             />
           </View>
 
+          {/* Security Settings Section */}
+          <View style={styles.fieldsContainer}>
+            <Text style={[styles.sectionTitle, { marginTop: Spacing.xl }]}>
+              Security Settings
+            </Text>
+
+            {/* Biometric Setting */}
+            {biometricAvailable && (
+              <TouchableOpacity 
+                style={styles.securityOption}
+                onPress={handleBiometricToggle}
+                activeOpacity={0.7}
+              >
+                <View style={styles.securityOptionLeft}>
+                  <View style={styles.fieldIcon}>
+                    <MaterialIcons 
+                      name={biometricType === 'Biometric' ? 'face' : 'fingerprint'} 
+                      size={20} 
+                      color={Colors.light.textSecondary} 
+                    />
+                  </View>
+                  <View style={styles.securityOptionContent}>
+                    <Text style={styles.securityOptionTitle}>
+                      {biometricType} Login
+                    </Text>
+                    <Text style={styles.securityOptionSubtitle}>
+                      {biometricEnabled 
+                        ? `Quick login with ${biometricType}` 
+                        : `Enable ${biometricType} for quick access`}
+                    </Text>
+                  </View>
+                </View>
+                <Switch
+                  value={biometricEnabled}
+                  onValueChange={handleBiometricToggle}
+                  trackColor={{ false: '#E5E7EB', true: Colors.light.primary }}
+                  thumbColor="#FFFFFF"
+                  ios_backgroundColor="#E5E7EB"
+                />
+              </TouchableOpacity>
+            )}
+
+            {/* Change Password Option */}
+            {/* <TouchableOpacity 
+              style={styles.securityOption}
+              onPress={() => Alert.alert('Coming Soon', 'Password change will be available soon')}
+              activeOpacity={0.7}
+            >
+              <View style={styles.securityOptionLeft}>
+                <View style={styles.fieldIcon}>
+                  <Feather name="lock" size={20} color={Colors.light.textSecondary} />
+                </View>
+                <View style={styles.securityOptionContent}>
+                  <Text style={styles.securityOptionTitle}>Change Password</Text>
+                  <Text style={styles.securityOptionSubtitle}>Update your account password</Text>
+                </View>
+              </View>
+              <Feather name="chevron-right" size={20} color={Colors.light.textTertiary} />
+            </TouchableOpacity> */}
+          </View>
+
           {/* Action Buttons */}
           <View style={styles.actions}>
             <TouchableOpacity style={styles.actionButton} onPress={openDashboardSettings}>
@@ -285,7 +397,6 @@ export default function ProfileScreen() {
   );
 }
 
-// Styles remain the same as before
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -425,6 +536,34 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.light.primary,
     paddingVertical: 2,
+  },
+  // New styles for security settings
+  securityOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.light.background,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.sm,
+  },
+  securityOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  securityOptionContent: {
+    flex: 1,
+  },
+  securityOptionTitle: {
+    fontSize: 16,
+    color: Colors.light.text,
+    fontWeight: '500',
+    marginBottom: 2,
+  },
+  securityOptionSubtitle: {
+    fontSize: 13,
+    color: Colors.light.textSecondary,
   },
   actions: {
     paddingHorizontal: Spacing.lg,

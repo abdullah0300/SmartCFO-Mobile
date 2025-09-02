@@ -1,5 +1,5 @@
 // app/(auth)/login.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,16 +8,27 @@ import {
   Platform,
   ScrollView,
   Alert,
-  Image,
+  TouchableOpacity,
+  Switch,
+  ActivityIndicator,
+  Linking,
+  Dimensions,
+  TextInput, 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Feather, MaterialIcons, Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+
 import { useAuth } from '../../src/hooks/useAuth';
+import { useBiometric } from '../../src/hooks/useBiometric';
 import { Button } from '../../src/components/ui/Button';
 import { Input } from '../../src/components/ui/Input';
 import { Colors, Spacing, Typography, BorderRadius } from '../../src/constants/Colors';
+
+const { width, height } = Dimensions.get('window');
 
 // Define navigation types
 type RootStackParamList = {
@@ -28,13 +39,46 @@ type RootStackParamList = {
 type LoginScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Login'>;
 
 export default function LoginScreen() {
-  const { signIn } = useAuth();
+  const { signIn, signInWithBiometric } = useAuth();
+  const { 
+    isAvailable, 
+    isEnabled, 
+    biometricType, 
+    enableBiometric,
+    loading: biometricLoading
+  } = useBiometric();
+  
   const navigation = useNavigation<LoginScreenNavigationProp>();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [enableBiometricOnLogin, setEnableBiometricOnLogin] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+
+  // Check for biometric login on mount
+  useEffect(() => {
+    if (!biometricLoading && isEnabled) {
+      setTimeout(() => {
+        handleBiometricLogin();
+      }, 500);
+    }
+  }, [biometricLoading, isEnabled]);
+
+  const handleBiometricLogin = async () => {
+    setLoading(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    
+    const success = await signInWithBiometric();
+    if (!success) {
+      Alert.alert(
+        'Biometric Login Failed',
+        'Please use your email and password to sign in.'
+      );
+    }
+    setLoading(false);
+  };
 
   const validateForm = () => {
     const newErrors: { email?: string; password?: string } = {};
@@ -61,8 +105,14 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       await signIn(email, password);
-      // Navigation will be handled automatically by the AuthNavigator in App.tsx
-      // No need to manually navigate here
+      
+      // If user wants to enable biometric
+      if (enableBiometricOnLogin && isAvailable) {
+        const success = await enableBiometric(email, password);
+        if (success) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+      }
     } catch (error: any) {
       console.error('Login error:', error);
       Alert.alert(
@@ -74,12 +124,60 @@ export default function LoginScreen() {
     }
   };
 
+  const handleSignUpRedirect = () => {
+    // Redirect to web app sign up
+    Linking.openURL('https://smartcfo.webcraftio.com/register').catch(err => 
+      Alert.alert('Error', 'Could not open sign up page')
+    );
+  };
+
+  const handleForgotPassword = () => {
+    Alert.alert(
+      'Reset Password',
+      'Password reset is available on the web app. Would you like to open it?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Open Web App', 
+          onPress: () => Linking.openURL('https://smartcfo.webcraftio.com/login')
+        }
+      ]
+    );
+  };
+
+  if (biometricLoading) {
+    return (
+      <LinearGradient
+        colors={['#FFFFFF', '#F0F9FF', '#E0F2FE']}
+         style={styles.container}
+      >
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#6366F1" />
+        </View>
+      </LinearGradient>
+    );
+  }
+
   return (
-    <LinearGradient
-      colors={['#FFFFFF', '#F0F9FF', '#E0F2FE']}
-      style={styles.gradient}
-    >
-      <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
+      {/* Background Gradient */}
+      <LinearGradient
+        colors={['#6366F1', '#8B5CF6', '#EC4899']}
+        style={styles.backgroundGradient}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+      />
+
+      {/* Floating Elements */}
+      <View style={styles.floatingElements}>
+        <View style={[styles.floatingCircle, styles.circle1]} />
+        <View style={[styles.floatingCircle, styles.circle2]} />
+        <Ionicons name="calculator-outline" size={40} color="rgba(255,255,255,0.1)" style={styles.floatingIcon1} />
+        <MaterialIcons name="trending-up" size={35} color="rgba(255,255,255,0.1)" style={styles.floatingIcon2} />
+        <Feather name="dollar-sign" size={30} color="rgba(255,255,255,0.1)" style={styles.floatingIcon3} />
+      </View>
+
+      <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.keyboardView}
@@ -89,144 +187,455 @@ export default function LoginScreen() {
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
-            {/* Logo/Brand Section */}
+            {/* Logo and Title */}
             <View style={styles.headerSection}>
               <View style={styles.logoContainer}>
                 <LinearGradient
-                  colors={[Colors.light.primary, Colors.light.secondary]}
-                  style={styles.logoGradient}
+                  colors={['rgba(255,255,255,0.9)', 'rgba(255,255,255,0.8)']}
+                  style={styles.logoBackground}
                 >
                   <Text style={styles.logoText}>SC</Text>
                 </LinearGradient>
               </View>
-              <Text style={styles.brandName}>SmartCFO</Text>
-              <Text style={styles.tagline}>Your Financial Command Center</Text>
+              <Text style={styles.welcomeText}>Welcome back</Text>
+              <Text style={styles.subtitleText}>Sign in to manage your finances</Text>
             </View>
 
-            {/* Form Section */}
-            <View style={styles.formSection}>
-              <Text style={styles.welcomeText}>Welcome back</Text>
-              <Text style={styles.subtitleText}>Sign in to continue managing your finances</Text>
-
-              <View style={styles.form}>
-                <Input
-                  label="Email"
-                  placeholder="your@email.com"
-                  value={email}
-                  onChangeText={setEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  error={errors.email}
-                  icon="mail"
-                />
-
-                <Input
-                  label="Password"
-                  placeholder="Enter your password"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  error={errors.password}
-                  icon={showPassword ? 'eye-off' : 'eye'}
-                  onIconPress={() => setShowPassword(!showPassword)}
-                />
-
-                <Button
-                  title="Sign In"
-                  onPress={handleLogin}
-                  loading={loading}
-                  style={styles.loginButton}
-                />
-
-                <Text style={styles.footerText}>
-                  Don't have an account?{' '}
-                  <Text 
-                    style={styles.linkText} 
-                    onPress={() => Alert.alert('Coming Soon', 'Registration will be available soon')}
+            {/* Login Card */}
+            <View style={styles.loginCard}>
+              {/* Biometric Login Button - Show if enabled */}
+              {isEnabled && (
+                <>
+                  <TouchableOpacity
+                    style={styles.biometricMainButton}
+                    onPress={handleBiometricLogin}
+                    disabled={loading}
+                    activeOpacity={0.8}
                   >
-                    Sign up
-                  </Text>
-                </Text>
+                    <LinearGradient
+                      colors={['#6366F1', '#8B5CF6']}
+                      style={styles.biometricButtonGradient}
+                    >
+                      <Feather 
+                        name={biometricType === 'Face ID' ? 'smile' : 'unlock'} 
+                        size={24} 
+                        color="#FFFFFF" 
+                      />
+                      <Text style={styles.biometricButtonText}>
+                        Login with {biometricType}
+                      </Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+
+                  <View style={styles.dividerContainer}>
+                    <View style={styles.divider} />
+                    <Text style={styles.dividerText}>OR</Text>
+                    <View style={styles.divider} />
+                  </View>
+                </>
+              )}
+
+              {/* Email Input */}
+              <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>Email address</Text>
+                <View style={styles.inputWrapper}>
+                  <Feather name="mail" size={20} color="#94A3B8" style={styles.inputIcon} />
+                  <TextInput
+                    value={email}
+                    onChangeText={setEmail}
+                    placeholder="john@example.com"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    style={styles.input}
+                  />
+                </View>
+                {errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
+              </View>
+
+              {/* Password Input */}
+              <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>Password</Text>
+                <View style={styles.inputWrapper}>
+                  <Feather name="lock" size={20} color="#94A3B8" style={styles.inputIcon} />
+                  <TextInput
+                    value={password}
+                    onChangeText={setPassword}
+                    placeholder="Enter your password"
+                    placeholderTextColor="#94A3B8"
+                    secureTextEntry={!showPassword}
+                    style={styles.input}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowPassword(!showPassword)}
+                    style={styles.eyeIcon}
+                  >
+                    <Feather 
+                      name={showPassword ? 'eye-off' : 'eye'} 
+                      size={20} 
+                      color="#94A3B8" 
+                    />
+                  </TouchableOpacity>
+                </View>
+                {errors.password && <Text style={styles.errorText}>{errors.password}</Text>}
+              </View>
+
+              
+
+              {/* Biometric Enable Option */}
+              {isAvailable && !isEnabled && (
+                <View style={styles.biometricOption}>
+                  <View style={styles.biometricOptionLeft}>
+                    <Feather 
+                      name={biometricType === 'Face ID' ? 'smile' : 'unlock'} 
+                      size={20} 
+                      color="#6366F1" 
+                    />
+                    <Text style={styles.biometricText}>
+                      Enable {biometricType} for quick login
+                    </Text>
+                  </View>
+                  <Switch
+                    value={enableBiometricOnLogin}
+                    onValueChange={setEnableBiometricOnLogin}
+                    trackColor={{ false: '#E2E8F0', true: '#6366F1' }}
+                    thumbColor="#FFFFFF"
+                    ios_backgroundColor="#E2E8F0"
+                  />
+                </View>
+              )}
+
+              {/* Sign In Button */}
+              <TouchableOpacity
+                style={[styles.signInButton, loading && styles.signInButtonDisabled]}
+                onPress={handleLogin}
+                disabled={loading}
+                activeOpacity={0.8}
+              >
+                <LinearGradient
+                  colors={['#6366F1', '#8B5CF6']}
+                  style={styles.signInButtonGradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                >
+                  {loading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Text style={styles.signInButtonText}>Sign in</Text>
+                      <Feather name="chevron-right" size={20} color="#FFFFFF" />
+                    </>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+
+              {/* Sign Up Link */}
+              <View style={styles.signUpContainer}>
+                <Text style={styles.signUpText}>New to SmartCFO?</Text>
+                <TouchableOpacity onPress={handleSignUpRedirect}>
+                  <Text style={styles.signUpLink}>Create an account</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Trust Indicators */}
+            <View style={styles.trustIndicators}>
+              <View style={styles.trustItem}>
+                <Feather name="shield" size={16} color="rgba(255,255,255,0.8)" />
+                <Text style={styles.trustText}>Secure</Text>
+              </View>
+              <View style={styles.trustItem}>
+                <Feather name="check-circle" size={16} color="rgba(255,255,255,0.8)" />
+                <Text style={styles.trustText}>GDPR Compliant</Text>
+              </View>
+              <View style={styles.trustItem}>
+                <MaterialIcons name="business" size={16} color="rgba(255,255,255,0.8)" />
+                <Text style={styles.trustText}>10k+ businesses</Text>
               </View>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
-    </LinearGradient>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  gradient: {
-    flex: 1,
-  },
   container: {
     flex: 1,
+  },
+  backgroundGradient: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+  },
+  floatingElements: {
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+  },
+  floatingCircle: {
+    position: 'absolute',
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  circle1: {
+    width: 200,
+    height: 200,
+    top: -50,
+    left: -50,
+  },
+  circle2: {
+    width: 150,
+    height: 150,
+    bottom: -30,
+    right: -30,
+  },
+  floatingIcon1: {
+    position: 'absolute',
+    top: 100,
+    right: 30,
+  },
+  floatingIcon2: {
+    position: 'absolute',
+    bottom: 150,
+    left: 30,
+  },
+  floatingIcon3: {
+    position: 'absolute',
+    top: height * 0.4,
+    left: 20,
+  },
+  safeArea: {
+    flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   keyboardView: {
     flex: 1,
   },
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: Spacing.lg,
+    paddingHorizontal: 20,
+    paddingBottom: 40,
   },
   headerSection: {
     alignItems: 'center',
-    marginTop: Spacing.xxl,
-    marginBottom: Spacing.xl,
+    marginTop: height * 0.08,
+    marginBottom: 30,
   },
   logoContainer: {
-    marginBottom: Spacing.md,
+    marginBottom: 20,
   },
-  logoGradient: {
+  logoBackground: {
     width: 80,
     height: 80,
-    borderRadius: BorderRadius.xl,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
   },
   logoText: {
     fontSize: 32,
     fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  brandName: {
-    ...Typography.title1,
-    color: Colors.light.text,
-    marginBottom: Spacing.xs,
-  },
-  tagline: {
-    ...Typography.callout,
-    color: Colors.light.textSecondary,
-  },
-  formSection: {
-    flex: 1,
-    justifyContent: 'center',
+    color: '#6366F1',
   },
   welcomeText: {
-    ...Typography.title2,
-    color: Colors.light.text,
-    marginBottom: Spacing.xs,
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 8,
   },
   subtitleText: {
-    ...Typography.body,
-    color: Colors.light.textSecondary,
-    marginBottom: Spacing.xl,
+    fontSize: 16,
+    color: 'rgba(255,255,255,0.8)',
   },
-  form: {
-    marginBottom: Spacing.xl,
+  loginCard: {
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderRadius: 24,
+    padding: 24,
+    marginBottom: 30,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 10,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
+    elevation: 10,
   },
-  loginButton: {
-    marginTop: Spacing.md,
-    marginBottom: Spacing.lg,
+  biometricMainButton: {
+    marginBottom: 20,
   },
-  footerText: {
-    ...Typography.callout,
-    color: Colors.light.textSecondary,
-    textAlign: 'center',
+  biometricButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 12,
   },
-  linkText: {
-    color: Colors.light.primary,
+  biometricButtonText: {
+    fontSize: 16,
     fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  divider: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E2E8F0',
+  },
+  dividerText: {
+    marginHorizontal: 16,
+    color: '#94A3B8',
+    fontSize: 14,
+  },
+  inputContainer: {
+    marginBottom: 20,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#334155',
+    marginBottom: 8,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 16,
+    height: 52,
+  },
+  inputIcon: {
+    marginRight: 12,
+  },
+  input: {
+    flex: 1,
+    fontSize: 16,
+    color: '#1E293B',
+  },
+  eyeIcon: {
+    padding: 4,
+  },
+  errorText: {
+    color: '#EF4444',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  optionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  rememberContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    marginRight: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: '#6366F1',
+    borderColor: '#6366F1',
+  },
+  rememberText: {
+    fontSize: 14,
+    color: '#64748B',
+  },
+  forgotText: {
+    fontSize: 14,
+    color: '#6366F1',
+    fontWeight: '500',
+  },
+  biometricOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  biometricOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  biometricText: {
+    fontSize: 14,
+    color: '#334155',
+    fontWeight: '500',
+    flex: 1,
+  },
+  signInButton: {
+    marginBottom: 20,
+  },
+  signInButtonDisabled: {
+    opacity: 0.6,
+  },
+  signInButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 8,
+  },
+  signInButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  signUpContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+  },
+  signUpText: {
+    fontSize: 14,
+    color: '#64748B',
+  },
+  signUpLink: {
+    fontSize: 14,
+    color: '#6366F1',
+    fontWeight: '600',
+  },
+  trustIndicators: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 20,
+  },
+  trustItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  trustText: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.8)',
   },
 });

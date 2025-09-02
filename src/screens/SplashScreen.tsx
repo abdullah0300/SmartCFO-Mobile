@@ -72,8 +72,15 @@ export default function SplashScreen({ onAnimationComplete }: SplashScreenProps)
       ])
     ).start();
 
-    // Auto dismiss
-    setTimeout(onAnimationComplete, 3000);
+    setTimeout(() => {
+  Animated.timing(fadeAnim, {
+    toValue: 0,
+    duration: 400,
+    useNativeDriver: true,
+  }).start(() => {
+    onAnimationComplete();
+  });
+}, 2000);
   }, []);
 
   const spin = rotateAnim.interpolate({

@@ -1,5 +1,5 @@
 // App.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -8,7 +8,9 @@ import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import * as ExpoSplashScreen from 'expo-splash-screen';
 import SplashScreen from './src/screens/SplashScreen';
+
 // Auth Screens
 import LoginScreen from './app/(auth)/login';
 
@@ -25,7 +27,6 @@ import TransactionDetailScreen from './src/screens/TransactionDetailScreen';
 import InvoiceViewScreen from './src/screens/InvoiceViewScreen';
 import CreateInvoiceScreen from './src/screens/CreateInvoiceScreen';
 import RecurringInvoicesScreen from './src/screens/RecurringInvoicesScreen';
-// import EditInvoiceScreen from './src/screens/EditInvoiceScreen';
 
 // Management Screens
 import ClientsScreen from './src/screens/ClientsScreen';
@@ -36,13 +37,16 @@ import VendorsScreen from './src/screens/VendorsScreen';
 import { AuthProvider, useAuth } from './src/hooks/useAuth';
 import { SettingsProvider } from './src/contexts/SettingsContext';
 import { TabBar } from './src/components/navigation/TabBar';
-import { FloatingActionBar } from './src/components/common/FloatingActionBar'; // ADD THIS LINE
+import { FloatingActionBar } from './src/components/common/FloatingActionBar';
 import { Colors } from './src/constants/Colors';
 import InvoiceSettingsScreen from './src/screens/InvoiceSettingsScreen';
 import RecurringInvoiceEditScreen from './src/screens/RecurringInvoiceEditScreen';
 import ClientDetailScreen from './src/screens/ClientDetailScreen';
 import BudgetScreen from './src/screens/BudgetScreen';
 import ReportsOverviewScreen from './src/screens/ReportsOverviewScreen';
+
+// Prevent the native splash screen from auto-hiding
+ExpoSplashScreen.preventAutoHideAsync();
 
 // Type definitions for navigation
 export type RootStackParamList = {
@@ -56,7 +60,7 @@ export type RootStackParamList = {
     clientId?: string;
   } | undefined;
   RecurringInvoices: undefined;
-  RecurringInvoiceEdit: { recurringId: string }; // ADD THIS LINE
+  RecurringInvoiceEdit: { recurringId: string };
   Clients: undefined;
   ClientDetail: { clientId: string };
   Budget: undefined;
@@ -87,7 +91,6 @@ const PlaceholderScreen = () => (
     <ActivityIndicator size="large" color={Colors.light.primary} />
   </View>
 );
-
 
 function TabNavigator() {
   return (
@@ -168,23 +171,23 @@ function AuthNavigator() {
             options={{ headerShown: false }}
           />
           <Stack.Screen 
-              name="Budget" 
-              component={BudgetScreen}
-              options={{ 
-                headerShown: false,
-                animation: 'slide_from_right',
-                presentation: 'card'
-              }}
-            />
-            <Stack.Screen 
-              name="ReportsOverview" 
-              component={ReportsOverviewScreen}
-              options={{ 
-                headerShown: false,
-                animation: 'slide_from_right',
-                presentation: 'card'
-              }}
-            />
+            name="Budget" 
+            component={BudgetScreen}
+            options={{ 
+              headerShown: false,
+              animation: 'slide_from_right',
+              presentation: 'card'
+            }}
+          />
+          <Stack.Screen 
+            name="ReportsOverview" 
+            component={ReportsOverviewScreen}
+            options={{ 
+              headerShown: false,
+              animation: 'slide_from_right',
+              presentation: 'card'
+            }}
+          />
           <Stack.Screen 
             name="Categories" 
             component={CategoriesScreen || PlaceholderScreen}
@@ -209,7 +212,6 @@ function AuthNavigator() {
               presentation: 'card' 
             }}
           />
-
           <Stack.Screen 
             name="InvoiceSettings" 
             component={InvoiceSettingsScreen}
@@ -222,17 +224,49 @@ function AuthNavigator() {
     </Stack.Navigator>
   );
 }
+
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
+  const [appIsReady, setAppIsReady] = useState(false);
+
+  useEffect(() => {
+    async function prepare() {
+      try {
+        // You can do other async operations here like:
+        // - Load fonts
+        // - Load cached data
+        // - Preload assets
+        
+        // Artificially delay for demo purposes (remove in production)
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (e) {
+        console.warn(e);
+      } finally {
+        // Tell the app that it's ready to hide native splash
+        setAppIsReady(true);
+        // Hide the native splash screen
+        await ExpoSplashScreen.hideAsync();
+      }
+    }
+
+    prepare();
+  }, []);
 
   const handleSplashComplete = () => {
     setShowSplash(false);
   };
 
+  // Don't render anything until the app is ready
+  if (!appIsReady) {
+    return null;
+  }
+
+  // Show custom splash screen
   if (showSplash) {
     return <SplashScreen onAnimationComplete={handleSplashComplete} />;
   }
 
+  // Show main app
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>

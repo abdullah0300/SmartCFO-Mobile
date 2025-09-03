@@ -61,12 +61,18 @@ export const BiometricService = {
   },
 
   // Enable biometric login
- async enable(email: string): Promise<boolean> {
+ async enable(email: string, password: string): Promise<boolean> {
   try {
     const authenticated = await this.authenticate('Authenticate to enable biometric login');
     if (!authenticated) return false;
     
-    // Store only email, not password
+    // Store credentials for biometric login
+    await SecureStore.setItemAsync(USER_CREDENTIALS_KEY, JSON.stringify({
+      email,
+      password
+    }));
+    
+    // Also store just email for display
     await SecureStore.setItemAsync('user_email', email);
     await SecureStore.setItemAsync(BIOMETRIC_ENABLED_KEY, 'true');
     

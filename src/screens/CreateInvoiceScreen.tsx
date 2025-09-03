@@ -709,6 +709,29 @@ try {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+
+           {/* Template Section */}
+          {!isEditMode && templates.length > 0 && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Use Template</Text>
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false}
+                style={styles.templateSelector}
+              >
+                {templates.map((template) => (
+                  <TouchableOpacity
+                    key={template.id}
+                    style={styles.templateChip}
+                    onPress={() => loadTemplate(template.id)}
+                  >
+                    <MaterialIcons name="description" size={16} color="#8B5CF6" />
+                    <Text style={styles.templateChipText}>{template.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
           {/* Invoice Header Info */}
           <View style={styles.invoiceHeader}>
             <View style={styles.invoiceNumberSection}>
@@ -895,28 +918,7 @@ try {
             ))}
           </View>
 
-         {/* Template Section */}
-          {!isEditMode && templates.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Use Template</Text>
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={false}
-                style={styles.templateSelector}
-              >
-                {templates.map((template) => (
-                  <TouchableOpacity
-                    key={template.id}
-                    style={styles.templateChip}
-                    onPress={() => loadTemplate(template.id)}
-                  >
-                    <MaterialIcons name="description" size={16} color="#8B5CF6" />
-                    <Text style={styles.templateChipText}>{template.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          )}
+        
 
           {/* Recurring Invoice Section */}
           <View style={styles.section}>
@@ -1827,7 +1829,6 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginTop: 2,
   },
-  // In CreateInvoiceScreen.tsx, add these styles to the StyleSheet.create({...}) object:
 
   templateChip: {
     flexDirection: 'row',

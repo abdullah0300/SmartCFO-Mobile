@@ -38,110 +38,87 @@ interface InvoiceItemProps {
 
 
 
-const InvoiceItem: React.FC<InvoiceItemProps> = ({ item, onPress, formatCurrency, currencySymbol }) => {
-    const { getCurrencySymbol, baseCurrency } = useSettings(); 
-  const getStatusGradient = (status: string | undefined): readonly [string, string, ...string[]] => {
+const InvoiceItem: React.FC<InvoiceItemProps> = ({ item, onPress, formatCurrency }) => {
+  const { getCurrencySymbol, baseCurrency } = useSettings();
+  
+  const getStatusColor = (status: string) => {
     switch (status) {
-      case 'paid': return ['#10B981', '#059669'] as const;
-      case 'sent': return ['#8B5CF6', '#7C3AED'] as const;
-      case 'overdue': return ['#EF4444', '#DC2626'] as const;
-      case 'draft': return ['#6B7280', '#4B5563'] as const;
-      case 'cancelled': return ['#DC2626', '#991B1B'] as const;
-      default: return ['#6B7280', '#4B5563'] as const;
+      case 'paid': return '#10B981';
+      case 'sent': return '#3B82F6';
+      case 'overdue': return '#EF4444';
+      case 'draft': return '#6B7280';
+      case 'cancelled': return '#DC2626';
+      default: return '#6B7280';
     }
   };
 
-  const getStatusIcon = (status: string | undefined) => {
+  const getStatusIcon = (status: string) => {
     switch (status) {
       case 'paid': return 'check-circle';
       case 'sent': return 'send';
       case 'overdue': return 'error';
       case 'draft': return 'edit';
-      case 'cancelled': return 'cancel';
       default: return 'help';
     }
   };
 
-  const getStatusText = (status: string | undefined) => {
-    if (!status) return 'Unknown';
-    return status.charAt(0).toUpperCase() + status.slice(1);
-  };
-  
-  // Safely extract data with fallbacks - use 'total' based on Invoice type
   const amount = item.total || 0;
   const isBaseCurrency = !item.currency || item.currency === baseCurrency;
   const clientName = item.client?.name || 'Unknown Client';
   const dueDate = item.due_date || item.created_at || new Date().toISOString();
   const invoiceNumber = item.invoice_number || `INV-${item.id?.slice(0, 8)}` || 'N/A';
   const status = item.status || 'draft';
-  
+  const statusColor = getStatusColor(status);
+
   return (
-    <TouchableOpacity 
-      activeOpacity={0.7}
+    <TouchableOpacity
+      style={styles.invoiceItem}
       onPress={() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         onPress(item);
       }}
+      activeOpacity={0.7}
     >
-      <LinearGradient
-        colors={['#FFFFFF', '#F9FAFB'] as const}
-        style={styles.invoiceItem}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      >
-        <View style={styles.itemContent}>
-          <View style={styles.itemLeft}>
-            <View style={styles.itemHeader}>
-              <Text style={styles.invoiceNumber}>{String(invoiceNumber)}</Text>
-              <LinearGradient
-                colors={getStatusGradient(status)}
-                style={styles.statusBadge}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
-                <MaterialIcons 
-                  name={getStatusIcon(status) as any} 
-                  size={12} 
-                  color="#FFFFFF" 
-                />
-                <Text style={styles.statusText}>
-                  {String(getStatusText(status))}
-                </Text>
-              </LinearGradient>
-            </View>
-            <Text style={styles.clientName} numberOfLines={1}>
-              {String(clientName)}
-            </Text>
-            <View style={styles.itemMeta}>
-              <Feather name="calendar" size={12} color="#9CA3AF" />
-              <Text style={styles.itemDate}>
-                Due {format(new Date(dueDate), 'MMM d, yyyy')}
+      <View style={styles.invoiceContent}>
+        <View style={styles.invoiceHeader}>
+          <View style={styles.invoiceNumberRow}>
+            <Text style={styles.invoiceNumber}>{invoiceNumber}</Text>
+            <View style={[styles.statusBadge, { backgroundColor: statusColor + '15' }]}>
+              <MaterialIcons 
+                name={getStatusIcon(status) as any} 
+                size={12} 
+                color={statusColor} 
+              />
+              <Text style={[styles.statusText, { color: statusColor }]}>
+                {status.charAt(0).toUpperCase() + status.slice(1)}
               </Text>
             </View>
           </View>
-          <View style={styles.amountContainer}>
-            <View style={styles.amountColumn}>
-              <Text style={styles.itemAmount}>
-                {isBaseCurrency 
-                  ? formatCurrency(amount)
-                  : `${getCurrencySymbol(item.currency || baseCurrency)} ${amount.toFixed(2)}`
-                }
-              </Text>
-              {!isBaseCurrency && item.currency && (
-                <Text style={styles.itemCurrency}>{item.currency}</Text>
-              )}
-            </View>
-              <View style={styles.arrowContainer}>
-              <LinearGradient
-                colors={['#8B5CF6', '#7C3AED'] as const}
-                style={styles.arrowGradient}
-              >
-                <Feather name="arrow-right" size={16} color="#FFFFFF" />
-              </LinearGradient>
-            </View>
+          <Text style={styles.invoiceAmount}>
+            {isBaseCurrency 
+              ? formatCurrency(amount)
+              : `${getCurrencySymbol(item.currency || baseCurrency)} ${amount.toFixed(2)}`
+            }
+          </Text>
+        </View>
+        
+        <View style={styles.invoiceFooter}>
+          <View style={styles.clientRow}>
+            <Feather name="user" size={14} color="#6B7280" />
+            <Text style={styles.clientName} numberOfLines={1}>{clientName}</Text>
+          </View>
+          <View style={styles.dateRow}>
+            <Feather name="calendar" size={14} color="#6B7280" />
+            <Text style={styles.dueDate}>
+              Due {format(new Date(dueDate), 'MMM d')}
+            </Text>
           </View>
         </View>
-      </LinearGradient>
+      </View>
+      
+      <View style={styles.actionArrow}>
+        <Feather name="chevron-right" size={20} color="#9CA3AF" />
+      </View>
     </TouchableOpacity>
   );
 };
@@ -492,6 +469,95 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.full,
     overflow: 'hidden',
   },
+  invoiceItem: {
+  backgroundColor: '#FFFFFF',
+  marginHorizontal: 16,
+  marginBottom: 12,
+  borderRadius: 16,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  padding: 16,
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.04,
+  shadowRadius: 8,
+  elevation: 2,
+  borderWidth: 1,
+  borderColor: '#F3F4F6',
+},
+invoiceContent: {
+  flex: 1,
+},
+invoiceHeader: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'flex-start',
+  marginBottom: 14,
+},
+invoiceNumberRow: {
+  flex: 1,
+  marginRight: 12,
+},
+invoiceNumber: {
+  fontSize: 15,
+  fontWeight: '600',
+  color: '#1F2937',
+  marginBottom: 6,
+},
+statusBadge: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  paddingHorizontal: 8,
+  paddingVertical: 3,
+  borderRadius: 8,
+  alignSelf: 'flex-start',
+  gap: 4,
+},
+statusText: {
+  fontSize: 11,
+  fontWeight: '600',
+},
+invoiceAmount: {
+  fontSize: 22,
+  fontWeight: '700',
+  color: '#1F2937',
+  textAlign: 'right',
+},
+invoiceFooter: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+},
+clientRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  flex: 1,
+  gap: 6,
+},
+clientName: {
+  fontSize: 13,
+  color: '#6B7280',
+  flex: 1,
+},
+dateRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 6,
+},
+dueDate: {
+  fontSize: 13,
+  color: '#6B7280',
+},
+actionArrow: {
+  width: 32,
+  height: 32,
+  borderRadius: 16,
+  backgroundColor: '#F9FAFB',
+  justifyContent: 'center',
+  alignItems: 'center',
+  marginLeft: 12,
+},
   addButtonInner: {
     width: 52,
     height: 52,
@@ -503,17 +569,7 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.md,
     paddingBottom: 100,
   },
-  invoiceItem: {
-    marginHorizontal: Spacing.md,
-    borderRadius: BorderRadius.xl,
-    shadowColor: '#8B5CF6',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: 'rgba(139, 92, 246, 0.1)',
-  },
+ 
   itemContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -529,30 +585,7 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
     marginBottom: 6,
   },
-  invoiceNumber: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1F2937',
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: BorderRadius.full,
-    gap: 4,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  clientName: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 6,
-    fontWeight: '500',
-  },
+
   itemMeta: {
     flexDirection: 'row',
     alignItems: 'center',

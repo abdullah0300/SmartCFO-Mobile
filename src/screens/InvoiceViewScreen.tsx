@@ -12,6 +12,7 @@ import {
   Platform,
   Dimensions,
 } from 'react-native';
+import * as Crypto from 'expo-crypto';
 import * as FileSystem from 'expo-file-system';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -48,7 +49,7 @@ export default function InvoiceViewScreen() {
   const { user } = useAuth();
   const { formatCurrency, getCurrencySymbol, baseCurrency } = useSettings();
   const queryClient = useQueryClient();
-  
+  const token = Crypto.randomUUID();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [invoiceSettings, setInvoiceSettings] = useState<InvoiceSettings | null>(null);
   const currencySymbol = invoice?.currency ? getCurrencySymbol(invoice.currency) : getCurrencySymbol(baseCurrency);
@@ -95,6 +96,34 @@ export default function InvoiceViewScreen() {
       setLoading(false);
     }
   };
+  const generatePublicLink = async (): Promise<string> => {
+  if (!invoice || !user) return '';
+  
+  try {
+    // Generate a UUID token using Expo's crypto
+    const token = require('expo-crypto').randomUUID();
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7); // 7 days expiry
+    
+    // Store the token in the database
+    const { error } = await supabase
+      .from('invoice_access_tokens')
+      .insert({
+        token,
+        invoice_id: invoice.id,
+        expires_at: expiresAt.toISOString()
+      });
+    
+    if (error) throw error;
+    
+    // Return the public link
+    const baseUrl = 'https://smartcfo.webcraftio.com';
+    return `${baseUrl}/invoice/public/${invoice.id}?token=${token}`;
+  } catch (err: any) {
+    console.error('Error generating public link:', err);
+    return '';
+  }
+};
 
   const handleStatusChange = async (newStatus: Invoice['status']) => {
     if (!invoice || !user) return;
@@ -282,24 +311,31 @@ const handleSendEmail = async () => {
   }
 };
   const handleShare = async () => {
-    if (!invoice) return;
+  if (!invoice) return;
+  
+  try {
+    // Generate the secure public link
+    const shareUrl = await generatePublicLink();
     
-    try {
-      const shareUrl = `${process.env.EXPO_PUBLIC_APP_URL}/invoices/public/${invoice.id}`;
-      const message = `Invoice #${invoice.invoice_number}\n` +
-        `Client: ${invoice.client?.name}\n` +
-        `Amount: ${formatAmount(invoice.total, invoice.currency)}\n` +
-        `Due Date: ${format(new Date(invoice.due_date), 'MMM dd, yyyy')}\n\n` +
-        `View invoice: ${shareUrl}`;
-      
-      await Share.share({
-        message,
-        title: `Invoice ${invoice.invoice_number}`,
-      });
-    } catch (error) {
-      console.error('Error sharing:', error);
+    if (!shareUrl) {
+      Alert.alert('Error', 'Failed to generate share link');
+      return;
     }
-  };
+    
+    const message = `Invoice #${invoice.invoice_number}\n` +
+      `Client: ${invoice.client?.name}\n` +
+      `Amount: ${formatAmount(invoice.total, invoice.currency)}\n` +
+      `Due Date: ${format(new Date(invoice.due_date), 'MMM dd, yyyy')}\n\n` +
+      `View invoice: ${shareUrl}`;
+    
+    await Share.share({
+      message,
+      title: `Invoice ${invoice.invoice_number}`,
+    });
+  } catch (error) {
+    console.error('Error sharing:', error);
+  }
+};
 
   const getStatusColor = (status: string) => {
     switch (status) {

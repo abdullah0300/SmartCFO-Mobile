@@ -31,6 +31,7 @@ interface SettingsContextType {
   enabledCurrencies: string[];
   taxRates: Record<string, number>;
   formatCurrency: (amount: number | undefined | null, options?: CurrencyFormatOptions) => string;
+  formatNumber: (num: number | undefined | null) => string;
   getCurrencySymbol: (currency: string) => string;
   getExchangeRate: (fromCurrency: string, toCurrency: string) => Promise<number>;
   convertToBaseCurrency: (amount: number, fromCurrency: string) => Promise<{ baseAmount: number; exchangeRate: number }>;
@@ -297,20 +298,46 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const formatCurrency = (
-    amount: number | undefined | null,
-    options?: CurrencyFormatOptions
-  ): string => {
-    if (amount === undefined || amount === null) {
-      amount = 0;
-    }
+  amount: number | undefined | null,
+  options?: CurrencyFormatOptions
+): string => {
+  // Handle null/undefined safely
+  if (amount === undefined || amount === null) {
+    amount = 0;
+  }
 
-    const currency = options?.currency || baseCurrency;
-    const symbol = getCurrencySymbol(currency);
-    const showCode = options?.showCode || false;
+  const currency = options?.currency || baseCurrency;
+  const symbol = getCurrencySymbol(currency);
+  const showCode = options?.showCode || false;
+  
+  try {
+    // Use Intl.NumberFormat for proper thousand separators
+    const formatted = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
     
-    const formatted = `${symbol}${amount.toFixed(2)}`;
-    return showCode ? `${formatted} ${currency}` : formatted;
-  };
+    const result = `${symbol}${formatted}`;
+    return showCode ? `${result} ${currency}` : result;
+  } catch (error) {
+    // Fallback if Intl.NumberFormat fails
+    console.warn('NumberFormat failed, using fallback:', error);
+    const fallbackFormatted = amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const result = `${symbol}${fallbackFormatted}`;
+    return showCode ? `${result} ${currency}` : result;
+  }
+};
+
+const formatNumber = (num: number | undefined | null): string => {
+  if (num === undefined || num === null) return '0';
+  
+  try {
+    return new Intl.NumberFormat('en-US').format(num);
+  } catch (error) {
+    // Fallback formatting
+    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  }
+};
 
   const currencySymbol = getCurrencySymbol(baseCurrency);
   const isUKBusiness = userCountry === 'UK' || userCountry === 'GB';
@@ -325,6 +352,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         enabledCurrencies,
         taxRates,
         formatCurrency,
+        formatNumber,
         getCurrencySymbol,
         getExchangeRate,
         convertToBaseCurrency,
@@ -352,7 +380,15 @@ export const useSettings = () => {
       taxRates: {},
       formatCurrency: (amount: number | undefined | null) => {
         const val = amount || 0;
-        return `$${val.toFixed(2)}`;
+        const formatted = new Intl.NumberFormat('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }).format(val);
+        return `$${formatted}`;
+      },
+      formatNumber: (num: number | undefined | null) => {  // ADD THIS
+        const val = num || 0;
+        return new Intl.NumberFormat('en-US').format(val);
       },
       getCurrencySymbol: (currency: string) => CURRENCY_SYMBOLS[currency] || currency,
       getExchangeRate: async () => 1,

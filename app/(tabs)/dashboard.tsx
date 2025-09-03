@@ -80,17 +80,7 @@ const DynamicGreeting = ({ userName }: { userName: string }) => {
   return <Text style={styles.greeting}>{greeting}</Text>;
 };
 
-// Helper function to format large amounts
-const formatCompactCurrency = (amount: number) => {
-  const { formatCurrency } = useSettings();
-  
-  if (Math.abs(amount) >= 1000000) {
-    return `${formatCurrency(amount / 1000000)}M`;
-  } else if (Math.abs(amount) >= 100000) {
-    return `${formatCurrency(amount / 1000)}K`;
-  }
-  return formatCurrency(amount);
-};
+
 
 const RecentTransaction = ({ 
   item, 
@@ -424,35 +414,19 @@ const handleOpenInsights = async () => {
                   <Text style={styles.overviewLabel}>Net Profit ({baseCurrency})</Text>
                   <Text style={[
                     styles.overviewValue,
-                    { 
-                      color: netProfit >= 0 ? '#FFFFFF' : '#FCA5A5',
-                      fontSize: Math.abs(netProfit) >= 1000000 ? 28 : 36
-                    }
+                    { color: netProfit >= 0 ? '#FFFFFF' : '#FCA5A5' }
                   ]}>
                     {netProfit >= 0 ? '' : '-'}
-                    {Math.abs(netProfit) >= 1000000 
-                      ? `${formatCurrency(Math.abs(netProfit) / 1000000)}M`
-                      : Math.abs(netProfit) >= 100000
-                      ? `${formatCurrency(Math.abs(netProfit) / 1000)}K`
-                      : formatCurrency(Math.abs(netProfit))
-                    }
+                    {formatCurrency(Math.abs(netProfit))}
                   </Text>
                               
                   <View style={styles.overviewStatsContainer}>
                     <View style={styles.overviewStat}>
                       <Feather name="trending-up" size={18} color="#10B981" />
                       <Text style={styles.overviewStatLabel}>Income</Text>
-                      <Text style={[
-                styles.overviewStatValue,
-                { fontSize: calculatedTotalIncome >= 1000000 ? 14 : 16 }
-              ]}>
-                {Math.abs(calculatedTotalIncome) >= 1000000 
-                  ? `${formatCurrency(calculatedTotalIncome / 1000000)}M`
-                  : Math.abs(calculatedTotalIncome) >= 100000
-                  ? `${formatCurrency(calculatedTotalIncome / 1000)}K`
-                  : formatCurrency(calculatedTotalIncome)
-                }
-              </Text>
+                     <Text style={styles.overviewStatValue}>
+                        {formatCurrency(calculatedTotalIncome)}
+                      </Text>
                     </View>
                     
                     <View style={styles.overviewDivider} />
@@ -460,16 +434,8 @@ const handleOpenInsights = async () => {
                   <View style={styles.overviewStat}>
                     <Feather name="trending-down" size={18} color="#EF4444" />
                     <Text style={styles.overviewStatLabel}>Expenses</Text>
-                    <Text style={[
-                      styles.overviewStatValue,
-                      { fontSize: calculatedTotalExpenses >= 1000000 ? 14 : 16 }
-                    ]}>
-                      {Math.abs(calculatedTotalExpenses) >= 1000000 
-                        ? `${formatCurrency(calculatedTotalExpenses / 1000000)}M`
-                        : Math.abs(calculatedTotalExpenses) >= 100000
-                        ? `${formatCurrency(calculatedTotalExpenses / 1000)}K`
-                        : formatCurrency(calculatedTotalExpenses)
-                      }
+                    <Text style={styles.overviewStatValue}>
+                      {formatCurrency(calculatedTotalExpenses)}
                     </Text>
                   </View>
                 </View>
@@ -489,16 +455,8 @@ const handleOpenInsights = async () => {
                 </View>
               </View>
               <Text style={styles.metricTitle}>Income</Text>
-              <Text style={[
-                styles.metricValue,
-                { fontSize: calculatedTotalIncome >= 1000000 ? 16 : 20 }
-              ]}>
-                {Math.abs(calculatedTotalIncome) >= 1000000 
-                  ? `${formatCurrency(calculatedTotalIncome / 1000000)}M`
-                  : Math.abs(calculatedTotalIncome) >= 100000
-                  ? `${formatCurrency(calculatedTotalIncome / 1000)}K`
-                  : formatCurrency(calculatedTotalIncome)
-                }
+              <Text style={styles.metricValue}>
+                {formatCurrency(calculatedTotalIncome)}
               </Text>
             </TouchableOpacity>
 
@@ -512,16 +470,8 @@ const handleOpenInsights = async () => {
         </View>
       </View>
       <Text style={styles.metricTitle}>Expenses</Text>
-      <Text style={[
-        styles.metricValue,
-        { fontSize: calculatedTotalExpenses >= 1000000 ? 16 : 20 }
-      ]}>
-        {Math.abs(calculatedTotalExpenses) >= 1000000 
-          ? `${formatCurrency(calculatedTotalExpenses / 1000000)}M`
-          : Math.abs(calculatedTotalExpenses) >= 100000
-          ? `${formatCurrency(calculatedTotalExpenses / 1000)}K`
-          : formatCurrency(calculatedTotalExpenses)
-        }
+      <Text style={styles.metricValue}>
+        {formatCurrency(calculatedTotalExpenses)}
       </Text>
     </TouchableOpacity>
   </View>
@@ -533,16 +483,8 @@ const handleOpenInsights = async () => {
         <Feather name="clock" size={20} color="#F59E0B" />
       </View>
       <Text style={styles.metricTitle}>Pending</Text>
-      <Text style={[
-        styles.metricValue,
-        { fontSize: (dashboardData?.pendingInvoices || 0) >= 1000000 ? 16 : 20 }
-      ]}>
-        {Math.abs(dashboardData?.pendingInvoices || 0) >= 1000000 
-          ? `${formatCurrency((dashboardData?.pendingInvoices || 0) / 1000000)}M`
-          : Math.abs(dashboardData?.pendingInvoices || 0) >= 100000
-          ? `${formatCurrency((dashboardData?.pendingInvoices || 0) / 1000)}K`
-          : formatCurrency(dashboardData?.pendingInvoices || 0)
-        }
+      <Text style={styles.metricValue}>
+        {formatCurrency(dashboardData?.pendingInvoices || 0)}
       </Text>
     </TouchableOpacity>
 
@@ -840,7 +782,7 @@ const handleOpenInsights = async () => {
         marginBottom: 4,
       },
       overviewValue: {
-        fontSize: 36,
+        fontSize: 32,
         fontWeight: '700',
         color: '#FFFFFF',
         marginBottom: Spacing.md,
@@ -921,7 +863,7 @@ const handleOpenInsights = async () => {
         marginBottom: 4,
       },
       metricValue: {
-        fontSize: 20,
+        fontSize: 18,
         fontWeight: '700',
         color: Colors.light.text,
       },

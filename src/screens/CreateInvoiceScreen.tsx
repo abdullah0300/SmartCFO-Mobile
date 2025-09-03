@@ -397,28 +397,63 @@ if (settingsData) {
   };
 
   const loadTemplate = (templateId: string) => {
-    const template = templates.find(t => t.id === templateId);
-    if (!template) return;
-    
-    const data = template.template_data;
-    
-    // Load template data
-    if (data.client_id) setSelectedClient(data.client_id);
-    if (data.tax_rate !== undefined) setTaxRate(data.tax_rate);
-    if (data.notes) setNotes(data.notes);
-    if (data.currency) setSelectedCurrency(data.currency);
-    // Load items
-    if (data.items && data.items.length > 0) {
-      setItems(data.items.map((item: any) => ({
-        description: item.description,
-        quantity: item.quantity || 1,
-        rate: item.rate || 0,
-        amount: item.amount || 0,
-      })));
-    }
-    
-    Alert.alert('Success', `Template "${template.name}" loaded`);
-  };
+  const template = templates.find(t => t.id === templateId);
+  if (!template) return;
+  
+  const data = template.template_data;
+  
+  // Load basic data
+  if (data.client_id) setSelectedClient(data.client_id);
+  if (data.tax_rate !== undefined) setTaxRate(data.tax_rate);
+  if (data.notes) setNotes(data.notes);
+  if (data.currency) setSelectedCurrency(data.currency);
+  
+  // Load income category
+  if (data.income_category_id) {
+    setIncomeCategoryId(data.income_category_id);
+  }
+  
+  // Load recurring settings
+  if (data.is_recurring !== undefined) {
+    setIsRecurring(data.is_recurring);
+  }
+  if (data.frequency) {
+    setFrequency(data.frequency);
+  }
+  if (data.recurring_end_date) {
+    setRecurringEndDate(new Date(data.recurring_end_date));
+  }
+  
+  // Load payment terms and calculate due date
+  if (data.payment_terms || data.due_days) {
+    const days = data.payment_terms || data.due_days || 30;
+    setDueDate(addDays(issueDate, days));
+  }
+  
+  // Load items with all tax data
+  if (data.items && data.items.length > 0) {
+    setItems(data.items.map((item: any) => ({
+      description: item.description,
+      quantity: item.quantity || 1,
+      rate: item.rate || 0,
+      amount: item.amount || 0,
+      tax_rate: item.tax_rate || 0,
+      tax_amount: item.tax_amount || 0,
+      net_amount: item.net_amount || item.amount || 0,
+      gross_amount: item.gross_amount || item.amount || 0,
+    })));
+  }
+  
+  // Show success message with template details
+  let message = `Template "${template.name}" loaded`;
+  if (data.is_recurring) {
+    message += ` (Recurring: ${data.frequency})`;
+  }
+  Alert.alert('Success', message);
+  
+  // Mark that we're using a template
+  setSelectedTemplate(templateId);
+};
 
   const handleSubmit = async () => {
   // Validation
@@ -595,29 +630,41 @@ try {
     await createInvoice(invoice, items, isRecurring, recurringData);
     
     // Save as template if requested
-    if (saveAsTemplate && templateName) {
-      await createInvoiceTemplate({
-        user_id: user.id,
-        name: templateName,
-        template_data: {
-          client_id: selectedClient,
-          subtotal,
-          tax_rate: taxRate,
-          tax_amount: taxAmount,
-          total,
-          notes,
-          currency: selectedCurrency,
-          items: items.map(item => ({
-            description: item.description,
-            quantity: item.quantity,
-            rate: item.rate,
-            amount: item.amount,
-          })),
-        },
-        is_default: false,
-      });
-    }
-    
+if (saveAsTemplate && templateName) {
+  await createInvoiceTemplate({
+    user_id: user.id,
+    name: templateName,
+    template_data: {
+      client_id: selectedClient,
+      subtotal,
+      tax_rate: taxRate,
+      tax_amount: taxAmount,
+      total,
+      notes,
+      currency: selectedCurrency,
+      items: items.map(item => ({
+        description: item.description,
+        quantity: item.quantity,
+        rate: item.rate,
+        amount: item.amount,
+        tax_rate: item.tax_rate || 0,  // Include item-level tax
+        tax_amount: item.tax_amount || 0,
+        net_amount: item.net_amount || 0,
+        gross_amount: item.gross_amount || 0,
+      })),
+      // ADD THESE NEW FIELDS:
+      income_category_id: incomeCategoryId || null,
+      is_recurring: isRecurring,
+      frequency: isRecurring ? frequency : null,
+      recurring_end_date: isRecurring && recurringEndDate 
+        ? format(recurringEndDate, 'yyyy-MM-dd') 
+        : null,
+      payment_terms: invoiceSettings?.payment_terms || 30,
+      due_days: invoiceSettings?.due_days || 30,
+    },
+    is_default: false,
+  });
+}
     // Refresh invoices list
     queryClient.invalidateQueries({ queryKey: ['invoices', user.id] });
     if (isRecurring) {

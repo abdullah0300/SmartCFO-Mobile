@@ -1,5 +1,3 @@
-// src/components/common/FloatingActionBar.tsx
-
 import React, { useState } from 'react';
 import {
   View,
@@ -13,11 +11,16 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export const FloatingActionBar: React.FC = () => {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const [isExpanded, setIsExpanded] = useState(false);
   const fadeAnim = useState(new Animated.Value(0))[0];
+
+  // Calculate bottom position based on tab bar + safe area
+  const bottomPosition = 90 + (insets.bottom || 0);
 
   const actions = [
     { icon: 'people', screen: 'Clients', color: '#3B82F6', label: 'Clients' },
@@ -77,6 +80,7 @@ export const FloatingActionBar: React.FC = () => {
           style={[
             styles.actionsContainer,
             {
+              bottom: bottomPosition + 70, // Adjust for FAB button height
               opacity: fadeAnim,
               transform: [{
                 scale: fadeAnim.interpolate({
@@ -108,7 +112,7 @@ export const FloatingActionBar: React.FC = () => {
       )}
 
       {/* Main Button */}
-      <View style={styles.mainButtonContainer}>
+      <View style={[styles.mainButtonContainer, { bottom: bottomPosition }]}>
         <TouchableOpacity onPress={toggleExpand} activeOpacity={0.9}>
           <LinearGradient
             colors={isExpanded ? ['#6B7280', '#4B5563'] : ['#3B82F6', '#8B5CF6']}
@@ -141,7 +145,6 @@ const styles = StyleSheet.create({
   },
   actionsContainer: {
     position: 'absolute',
-    bottom: 160,
     left: 20,
     right: 20,
     zIndex: 999,
@@ -176,7 +179,6 @@ const styles = StyleSheet.create({
   },
   mainButtonContainer: {
     position: 'absolute',
-    bottom: 90,
     right: 20,
     zIndex: 1000,
   },

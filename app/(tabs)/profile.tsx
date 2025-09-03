@@ -359,23 +359,7 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             )}
 
-            {/* Change Password Option */}
-            {/* <TouchableOpacity 
-              style={styles.securityOption}
-              onPress={() => Alert.alert('Coming Soon', 'Password change will be available soon')}
-              activeOpacity={0.7}
-            >
-              <View style={styles.securityOptionLeft}>
-                <View style={styles.fieldIcon}>
-                  <Feather name="lock" size={20} color={Colors.light.textSecondary} />
-                </View>
-                <View style={styles.securityOptionContent}>
-                  <Text style={styles.securityOptionTitle}>Change Password</Text>
-                  <Text style={styles.securityOptionSubtitle}>Update your account password</Text>
-                </View>
-              </View>
-              <Feather name="chevron-right" size={20} color={Colors.light.textTertiary} />
-            </TouchableOpacity> */}
+         
           </View>
 
           {/* Action Buttons */}

@@ -148,21 +148,36 @@ export default function InvoiceViewScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       
       // If marked as paid and has income category, create income entry
-      if (newStatus === 'paid' && invoice.income_category_id) {
-        try {
-          await supabase.from('income').insert({
-            user_id: user.id,
-            amount: invoice.total,
-            category_id: invoice.income_category_id,
-            description: `Invoice #${invoice.invoice_number} - ${invoice.client?.name}`,
-            date: new Date().toISOString().split('T')[0],
-            reference_number: invoice.invoice_number,
-            client_id: invoice.client_id,
-          });
-        } catch (err) {
-          console.error('Error creating income entry:', err);
-        }
-      }
+      // If marked as paid and has income category, create income entry
+if (newStatus === 'paid' && invoice.income_category_id) {
+  try {
+    // Check if income entry already exists
+    const { data: existingIncome } = await supabase
+      .from('income')
+      .select('id')
+      .eq('reference_number', invoice.invoice_number)
+      .eq('user_id', user.id)
+      .single();
+
+    if (!existingIncome) {
+      await supabase.from('income').insert({
+        user_id: user.id,
+        amount: invoice.total,
+        category_id: invoice.income_category_id,
+        description: `Invoice #${invoice.invoice_number} - ${invoice.client?.name}`,
+        date: new Date().toISOString().split('T')[0],
+        reference_number: invoice.invoice_number,
+        client_id: invoice.client_id,
+        // Add currency fields
+        currency: invoice.currency || baseCurrency,
+        exchange_rate: invoice.exchange_rate || 1,
+        base_amount: invoice.base_amount || (invoice.total / (invoice.exchange_rate || 1)),
+      });
+    }
+  } catch (err) {
+    console.error('Error creating income entry:', err);
+  }
+}
       
     } catch (error) {
       console.error('Error updating status:', error);

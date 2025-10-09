@@ -124,6 +124,7 @@ export const AddIncomeModal: React.FC<AddIncomeModalProps> = ({
     setTaxRate("0");
     setIncludeTax(false);
     setCurrency(baseCurrency);
+    setNewClientData({ name: "", email: "", phone: "", address: "" });
   };
 
   // In AddIncomeModal.tsx - Replace the handleSubmit function:
@@ -462,7 +463,7 @@ React.useEffect(() => {
                               styles.selectionChipTextSelected,
                           ]}
                         >
-                          {client.name}
+                          {client.name}{client.company_name ? ` - ${client.company_name}` : ''}
                         </Text>
                       </TouchableOpacity>
                     ))}
@@ -592,12 +593,12 @@ React.useEffect(() => {
             <ScrollView showsVerticalScrollIndicator={false}>
               <Input
                 label="Client Name *"
-                placeholder="John Doe or Company Name"
+                placeholder="John Doe"
                 value={newClientData.name}
                 onChangeText={(text) => setNewClientData({ ...newClientData, name: text })}
                 icon="user"
               />
-              
+
               <Input
                 label="Email"
                 placeholder="client@example.com"

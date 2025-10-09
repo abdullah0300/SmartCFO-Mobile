@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,9 +9,10 @@ import {
   ActivityIndicator,
   Dimensions,
   Image,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import {  startOfMonth, endOfMonth } from 'date-fns';
+import {  startOfMonth, endOfMonth, subDays, subMonths, subYears, startOfYear, endOfDay } from 'date-fns';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Feather, Ionicons , MaterialIcons} from '@expo/vector-icons';
@@ -20,6 +21,7 @@ import { useNavigation } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useSettings } from '../../src/contexts/SettingsContext';
 import { getDashboardData, getIncomes, getExpenses, getNotifications, getProfile } from '../../src/services/api';
@@ -30,6 +32,7 @@ import * as Haptics from 'expo-haptics';
 import { AIInsightsModal } from '../../src/components/dashboard/AIInsightsModal';
 import { CompositeNavigationProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { DateFilterBar } from '../../src/components/common/DateFilterBar';
 const { width } = Dimensions.get('window');
 
 // Navigation types
@@ -152,13 +155,21 @@ const RecentTransaction = ({
 
 export default function DashboardScreen() {
   const { user } = useAuth();
- const { formatCurrency, baseCurrency } = useSettings();    
+ const { formatCurrency, baseCurrency } = useSettings();
   const navigation = useNavigation<DashboardNavigationProp>();
   const [refreshing, setRefreshing] = useState(false);
   const [showAIInsights, setShowAIInsights] = useState(false);
   const [notificationCount, setNotificationCount] = useState(0);
   const [isOffline, setIsOffline] = useState(false);
   const queryClient = useQueryClient();
+
+  // Date filtering states
+  const [selectedDateRange, setSelectedDateRange] = useState('mtd');
+  const [customStartDate, setCustomStartDate] = useState(startOfMonth(new Date()));
+  const [customEndDate, setCustomEndDate] = useState(new Date());
+  const [showCustomModal, setShowCustomModal] = useState(false);
+  const [showStartPicker, setShowStartPicker] = useState(false);
+  const [showEndPicker, setShowEndPicker] = useState(false);
   // Check network status
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(state => {
@@ -247,43 +258,100 @@ const handleOpenInsights = async () => {
     }
   }, [notifications]);
 
-  // Calculate current month totals using base_amount
-    const currentDate = new Date();
-    const monthStart = startOfMonth(currentDate);
-    const monthEnd = endOfMonth(currentDate);
+  // Handle date range selection
+  const handleDateRangeSelect = (rangeId: string) => {
+    if (rangeId === 'custom') {
+      setShowCustomModal(true);
+      return;
+    }
+    setSelectedDateRange(rangeId);
+  };
 
-    // Filter for current month only
-    const currentMonthIncomes = recentIncomes?.filter((income: any) => {
-      const incomeDate = new Date(income.date);
-      return incomeDate >= monthStart && incomeDate <= monthEnd;
-    }) || [];
+  // Calculate filtered totals using base_amount
+  const { filteredIncome, filteredExpenses, filteredNetProfit } = useMemo(() => {
+    // Get date range based on selection
+    const now = new Date();
+    let dateRange;
 
-    const currentMonthExpenses = recentExpenses?.filter((expense: any) => {
-      const expenseDate = new Date(expense.date);
-      return expenseDate >= monthStart && expenseDate <= monthEnd;
-    }) || [];
+    switch (selectedDateRange) {
+      case 'mtd':
+        dateRange = { start: startOfMonth(now), end: endOfMonth(now) };
+        break;
+      case '1w':
+        dateRange = { start: subDays(now, 7), end: endOfDay(now) };
+        break;
+      case '4w':
+        dateRange = { start: subDays(now, 28), end: endOfDay(now) };
+        break;
+      case '1m':
+        dateRange = { start: subDays(now, 30), end: endOfDay(now) };
+        break;
+      case '3m':
+        dateRange = { start: subMonths(now, 3), end: endOfDay(now) };
+        break;
+      case '6m':
+        dateRange = { start: subMonths(now, 6), end: endOfDay(now) };
+        break;
+      case '1y':
+        dateRange = { start: subYears(now, 1), end: endOfDay(now) };
+        break;
+      case 'all':
+        dateRange = null;
+        break;
+      case 'custom':
+        dateRange = { start: customStartDate, end: customEndDate };
+        break;
+      default:
+        dateRange = { start: startOfMonth(now), end: endOfMonth(now) };
+    }
+    let incomesToCalculate = recentIncomes || [];
+    let expensesToCalculate = recentExpenses || [];
 
-    // Calculate totals using base_amount (like your web app)
-    const calculatedTotalIncome = currentMonthIncomes.reduce((sum: number, income: any) => {
+    // Apply date filter
+    if (dateRange) {
+      incomesToCalculate = incomesToCalculate.filter((income: any) => {
+        const incomeDate = new Date(income.date);
+        return incomeDate >= dateRange.start && incomeDate <= dateRange.end;
+      });
+
+      expensesToCalculate = expensesToCalculate.filter((expense: any) => {
+        const expenseDate = new Date(expense.date);
+        return expenseDate >= dateRange.start && expenseDate <= dateRange.end;
+      });
+    }
+
+    // Calculate totals using base_amount
+    const calculatedTotalIncome = incomesToCalculate.reduce((sum: number, income: any) => {
       return sum + (income.base_amount || income.amount || 0);
     }, 0);
 
-    const calculatedTotalExpenses = currentMonthExpenses.reduce((sum: number, expense: any) => {
+    const calculatedTotalExpenses = expensesToCalculate.reduce((sum: number, expense: any) => {
       return sum + (expense.base_amount || expense.amount || 0);
     }, 0);
 
     const calculatedNetProfit = calculatedTotalIncome - calculatedTotalExpenses;
 
+    return {
+      filteredIncome: calculatedTotalIncome,
+      filteredExpenses: calculatedTotalExpenses,
+      filteredNetProfit: calculatedNetProfit,
+    };
+  }, [recentIncomes, recentExpenses, selectedDateRange, customStartDate, customEndDate]);
+
   const onRefresh = async () => {
     setRefreshing(true);
     try {
-      // Refetch all queries in parallel
+      // Refetch all queries in parallel - this will update all pages when you refresh the dashboard
       await Promise.all([
         refetch(),
         queryClient.invalidateQueries({ queryKey: ['recent-incomes', user?.id] }),
         queryClient.invalidateQueries({ queryKey: ['recent-expenses', user?.id] }),
         queryClient.invalidateQueries({ queryKey: ['notifications', user?.id] }),
         queryClient.invalidateQueries({ queryKey: ['profile', user?.id] }),
+        // Also invalidate the full data sets used by other pages
+        queryClient.invalidateQueries({ queryKey: ['incomes', user?.id] }),
+        queryClient.invalidateQueries({ queryKey: ['expenses', user?.id] }),
+        queryClient.invalidateQueries({ queryKey: ['invoices', user?.id] }),
       ]);
     } catch (error) {
       console.error('Error refreshing dashboard:', error);
@@ -308,7 +376,7 @@ const handleOpenInsights = async () => {
     );
   }
 
-  const netProfit = calculatedNetProfit;
+  const netProfit = filteredNetProfit;
   const userName = profile?.full_name?.split(' ')[0] || profile?.first_name || 'there';
 
   return (
@@ -376,6 +444,18 @@ const handleOpenInsights = async () => {
           </View>
         </View>
 
+        {/* Date Filter Bar */}
+        <DateFilterBar
+          selectedPeriod={selectedDateRange}
+          onPeriodChange={handleDateRangeSelect}
+          customRange={selectedDateRange === 'custom' ? { start: customStartDate, end: customEndDate } : null}
+          onClearCustom={() => {
+            setSelectedDateRange('mtd');
+            setCustomStartDate(startOfMonth(new Date()));
+            setCustomEndDate(new Date());
+          }}
+        />
+
         {/* AI Insights Card */}
         <TouchableOpacity onPress={() => setShowAIInsights(true)} activeOpacity={0.8}>
           <LinearGradient
@@ -410,8 +490,8 @@ const handleOpenInsights = async () => {
                   style={styles.overviewCard}
                 >
                 <View style={styles.overviewPattern}>
-                  <Text style={styles.overviewTitle}>Monthly Overview</Text>
-                  <Text style={styles.overviewLabel}>Net Profit ({baseCurrency})</Text>
+                  <Text style={styles.overviewTitle}>Overview</Text>
+                  <Text style={styles.overviewLabel}>Total ({baseCurrency})</Text>
                   <Text style={[
                     styles.overviewValue,
                     { color: netProfit >= 0 ? '#FFFFFF' : '#FCA5A5' }
@@ -419,23 +499,23 @@ const handleOpenInsights = async () => {
                     {netProfit >= 0 ? '' : '-'}
                     {formatCurrency(Math.abs(netProfit))}
                   </Text>
-                              
+
                   <View style={styles.overviewStatsContainer}>
                     <View style={styles.overviewStat}>
                       <Feather name="trending-up" size={18} color="#10B981" />
                       <Text style={styles.overviewStatLabel}>Income</Text>
                      <Text style={styles.overviewStatValue}>
-                        {formatCurrency(calculatedTotalIncome)}
+                        {formatCurrency(filteredIncome)}
                       </Text>
                     </View>
-                    
+
                     <View style={styles.overviewDivider} />
-      
+
                   <View style={styles.overviewStat}>
                     <Feather name="trending-down" size={18} color="#EF4444" />
                     <Text style={styles.overviewStatLabel}>Expenses</Text>
                     <Text style={styles.overviewStatValue}>
-                      {formatCurrency(calculatedTotalExpenses)}
+                      {formatCurrency(filteredExpenses)}
                     </Text>
                   </View>
                 </View>
@@ -456,7 +536,7 @@ const handleOpenInsights = async () => {
               </View>
               <Text style={styles.metricTitle}>Income</Text>
               <Text style={styles.metricValue}>
-                {formatCurrency(calculatedTotalIncome)}
+                {formatCurrency(filteredIncome)}
               </Text>
             </TouchableOpacity>
 
@@ -471,7 +551,7 @@ const handleOpenInsights = async () => {
       </View>
       <Text style={styles.metricTitle}>Expenses</Text>
       <Text style={styles.metricValue}>
-        {formatCurrency(calculatedTotalExpenses)}
+        {formatCurrency(filteredExpenses)}
       </Text>
     </TouchableOpacity>
   </View>
@@ -551,6 +631,99 @@ const handleOpenInsights = async () => {
       loading={aiLoading}
       onRefresh={handleRefreshInsights}
     />
+
+      {/* Custom Date Range Modal */}
+      <Modal
+        visible={showCustomModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCustomModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.customModalContainer}>
+            <View style={styles.customModalHeader}>
+              <Text style={styles.customModalTitle}>Select Date Range</Text>
+              <TouchableOpacity onPress={() => setShowCustomModal(false)}>
+                <Feather name="x" size={24} color="#1F2937" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.customModalContent}>
+              <View style={styles.datePickerSection}>
+                <Text style={styles.dateLabel}>Start Date</Text>
+                <TouchableOpacity
+                  style={styles.dateButton}
+                  onPress={() => setShowStartPicker(true)}
+                >
+                  <Feather name="calendar" size={18} color="#6B7280" />
+                  <Text style={styles.dateButtonText}>
+                    {format(customStartDate, 'MMM dd, yyyy')}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.datePickerSection}>
+                <Text style={styles.dateLabel}>End Date</Text>
+                <TouchableOpacity
+                  style={styles.dateButton}
+                  onPress={() => setShowEndPicker(true)}
+                >
+                  <Feather name="calendar" size={18} color="#6B7280" />
+                  <Text style={styles.dateButtonText}>
+                    {format(customEndDate, 'MMM dd, yyyy')}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={styles.applyButton}
+                onPress={() => {
+                  setSelectedDateRange('custom');
+                  setShowCustomModal(false);
+                }}
+              >
+                <LinearGradient
+                  colors={['#3B82F6', '#8B5CF6']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.applyButtonGradient}
+                >
+                  <Text style={styles.applyButtonText}>Apply Filter</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Date Pickers */}
+      {showStartPicker && (
+        <DateTimePicker
+          value={customStartDate}
+          mode="date"
+          display="default"
+          onChange={(event, selectedDate) => {
+            setShowStartPicker(false);
+            if (selectedDate) {
+              setCustomStartDate(selectedDate);
+            }
+          }}
+        />
+      )}
+
+      {showEndPicker && (
+        <DateTimePicker
+          value={customEndDate}
+          mode="date"
+          display="default"
+          onChange={(event, selectedDate) => {
+            setShowEndPicker(false);
+            if (selectedDate) {
+              setCustomEndDate(selectedDate);
+            }
+          }}
+        />
+      )}
         </SafeAreaView>
       );
     }
@@ -947,6 +1120,77 @@ const handleOpenInsights = async () => {
         fontSize: 14,
         color: Colors.light.textTertiary,
         textAlign: 'center',
+      },
+      modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+      },
+      customModalContainer: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 20,
+        width: '85%',
+        maxWidth: 400,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 12,
+        elevation: 8,
+      },
+      customModalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 20,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F3F4F6',
+      },
+      customModalTitle: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: '#1F2937',
+      },
+      customModalContent: {
+        padding: 20,
+      },
+      datePickerSection: {
+        marginBottom: 16,
+      },
+      dateLabel: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: '#374151',
+        marginBottom: 8,
+      },
+      dateButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F9FAFB',
+        padding: 12,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+        gap: 8,
+      },
+      dateButtonText: {
+        fontSize: 14,
+        color: '#1F2937',
+        fontWeight: '500',
+      },
+      applyButton: {
+        borderRadius: 12,
+        overflow: 'hidden',
+        marginTop: 8,
+      },
+      applyButtonGradient: {
+        paddingVertical: 14,
+        alignItems: 'center',
+      },
+      applyButtonText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#FFFFFF',
       },
     });
     

@@ -32,6 +32,7 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({
   const queryClient = useQueryClient();
   
   const [name, setName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
@@ -40,6 +41,7 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({
   useEffect(() => {
     if (client) {
       setName(client.name);
+      setCompanyName(client.company_name || '');
       setEmail(client.email || '');
       setPhone(client.phone || '');
       setAddress(client.address || '');
@@ -76,6 +78,7 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({
       id: client.id,
       data: {
         name: name.trim(),
+        company_name: companyName.trim() || null,
         email: email.trim() || null,
         phone: phone.trim() || null,
         address: address.trim() || null,
@@ -105,10 +108,18 @@ export const EditClientModal: React.FC<EditClientModalProps> = ({
           <ScrollView showsVerticalScrollIndicator={false}>
             <Input
               label="Client Name *"
-              placeholder="John Doe or Company Name"
+              placeholder="John Doe"
               value={name}
               onChangeText={setName}
               icon="user"
+            />
+
+            <Input
+              label="Company Name"
+              placeholder="Company name (optional)"
+              value={companyName}
+              onChangeText={setCompanyName}
+              icon="briefcase"
             />
 
             <Input

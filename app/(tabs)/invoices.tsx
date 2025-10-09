@@ -1,5 +1,5 @@
 // app/(tabs)/invoices.tsx
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,21 +9,26 @@ import {
   RefreshControl,
   ScrollView,
   ActivityIndicator,
+  Modal,
+  TextInput,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
-import { format } from 'date-fns';
+import { format, subDays, subMonths, subYears, startOfYear, startOfMonth, endOfMonth, isWithinInterval, endOfDay } from 'date-fns';
 import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
 import { useNavigation } from '@react-navigation/native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 import { useAuth } from '../../src/hooks/useAuth';
 import { useSettings } from '../../src/contexts/SettingsContext';
 import { getInvoices } from '../../src/services/api';
 import { Colors, Spacing, Typography, BorderRadius } from '../../src/constants/Colors';
 import { Invoice } from '../../src/types';
+import { DateFilterBar } from '../../src/components/common/DateFilterBar';
 
 
 
@@ -40,7 +45,7 @@ interface InvoiceItemProps {
 
 const InvoiceItem: React.FC<InvoiceItemProps> = ({ item, onPress, formatCurrency }) => {
   const { getCurrencySymbol, baseCurrency } = useSettings();
-  
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'paid': return '#10B981';
@@ -84,10 +89,10 @@ const InvoiceItem: React.FC<InvoiceItemProps> = ({ item, onPress, formatCurrency
           <View style={styles.invoiceNumberRow}>
             <Text style={styles.invoiceNumber}>{invoiceNumber}</Text>
             <View style={[styles.statusBadge, { backgroundColor: statusColor + '15' }]}>
-              <MaterialIcons 
-                name={getStatusIcon(status) as any} 
-                size={12} 
-                color={statusColor} 
+              <MaterialIcons
+                name={getStatusIcon(status) as any}
+                size={12}
+                color={statusColor}
               />
               <Text style={[styles.statusText, { color: statusColor }]}>
                 {status.charAt(0).toUpperCase() + status.slice(1)}
@@ -128,6 +133,16 @@ export default function InvoicesScreen() {
   const navigation = useNavigation<any>();
   const [refreshing, setRefreshing] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
+
+  // Date filtering states
+  const [selectedDateRange, setSelectedDateRange] = useState('mtd');
+  const [customStartDate, setCustomStartDate] = useState(startOfMonth(new Date()));
+  const [customEndDate, setCustomEndDate] = useState(new Date());
+  const [showCustomModal, setShowCustomModal] = useState(false);
+  const [showStartPicker, setShowStartPicker] = useState(false);
+  const [showEndPicker, setShowEndPicker] = useState(false);
 
   const { data: invoices, isLoading, refetch, error } = useQuery({
     queryKey: ['invoices', user?.id],
@@ -149,23 +164,150 @@ export default function InvoicesScreen() {
     navigation.navigate('CreateInvoice');
   };
 
-  // Filter invoices based on selected filter
-  const filteredInvoices = invoices?.filter(invoice => {
-    if (selectedFilter === 'all') return true;
-    return invoice.status === selectedFilter;
-  }) || [];
+  // Handle date range selection
+  const handleDateRangeSelect = (rangeId: string) => {
+    if (rangeId === 'custom') {
+      setShowCustomModal(true);
+      return;
+    }
+    setSelectedDateRange(rangeId);
+  };
+
+  // Filter invoices based on selected filter, date range, and search
+  const filteredInvoices = useMemo(() => {
+    let filtered = invoices || [];
+
+    // Apply status filter
+    if (selectedFilter !== 'all') {
+      filtered = filtered.filter(invoice => invoice.status === selectedFilter);
+    }
+
+    // Get date range based on selection
+    const now = new Date();
+    let dateRange;
+
+    switch (selectedDateRange) {
+      case 'mtd':
+        dateRange = { start: startOfMonth(now), end: endOfMonth(now) };
+        break;
+      case '1w':
+        dateRange = { start: subDays(now, 7), end: endOfDay(now) };
+        break;
+      case '4w':
+        dateRange = { start: subDays(now, 28), end: endOfDay(now) };
+        break;
+      case '1m':
+        dateRange = { start: subDays(now, 30), end: endOfDay(now) };
+        break;
+      case '3m':
+        dateRange = { start: subMonths(now, 3), end: endOfDay(now) };
+        break;
+      case '6m':
+        dateRange = { start: subMonths(now, 6), end: endOfDay(now) };
+        break;
+      case '1y':
+        dateRange = { start: subYears(now, 1), end: endOfDay(now) };
+        break;
+      case 'all':
+        dateRange = null;
+        break;
+      case 'custom':
+        dateRange = { start: customStartDate, end: customEndDate };
+        break;
+      default:
+        dateRange = { start: startOfMonth(now), end: endOfMonth(now) };
+    }
+
+    // Apply date filter
+    if (dateRange) {
+      filtered = filtered.filter(invoice => {
+        // Use created_at for filtering (when invoice was created), not due_date (when payment is due)
+        const invoiceDate = new Date(invoice.created_at);
+        return invoiceDate >= dateRange.start && invoiceDate <= dateRange.end;
+      });
+    }
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(invoice => {
+        const clientName = invoice.client?.name?.toLowerCase() || '';
+        const invoiceNumber = (invoice.invoice_number || '').toLowerCase();
+        const status = (invoice.status || '').toLowerCase();
+
+        return (
+          clientName.includes(query) ||
+          invoiceNumber.includes(query) ||
+          status.includes(query)
+        );
+      });
+    }
+
+    return filtered;
+  }, [invoices, selectedFilter, selectedDateRange, customStartDate, customEndDate, searchQuery]);
 
   // Calculate stats with safe defaults - Updated to use 'total' field
-  const stats = invoices?.reduce((acc, invoice) => {
-  // Use base_amount for multi-currency support
-  const amount = invoice.base_amount || invoice.total || 0;
-  acc.total += amount;
-  if (invoice.status === 'paid') acc.paid += amount;
-  if (invoice.status === 'overdue') acc.overdue += amount;
-  if (invoice.status === 'sent') acc.pending += amount;
-  if (invoice.status === 'draft') acc.draft += amount;
-  return acc;
-}, { total: 0, paid: 0, overdue: 0, pending: 0, draft: 0 }) || { total: 0, paid: 0, overdue: 0, pending: 0, draft: 0 };
+  const stats = useMemo(() => {
+    // Get date range based on selection
+    const now = new Date();
+    let dateRange;
+
+    switch (selectedDateRange) {
+      case 'mtd':
+        dateRange = { start: startOfMonth(now), end: endOfMonth(now) };
+        break;
+      case '1w':
+        dateRange = { start: subDays(now, 7), end: endOfDay(now) };
+        break;
+      case '4w':
+        dateRange = { start: subDays(now, 28), end: endOfDay(now) };
+        break;
+      case '1m':
+        dateRange = { start: subDays(now, 30), end: endOfDay(now) };
+        break;
+      case '3m':
+        dateRange = { start: subMonths(now, 3), end: endOfDay(now) };
+        break;
+      case '6m':
+        dateRange = { start: subMonths(now, 6), end: endOfDay(now) };
+        break;
+      case '1y':
+        dateRange = { start: subYears(now, 1), end: endOfDay(now) };
+        break;
+      case 'all':
+        dateRange = null;
+        break;
+      case 'custom':
+        dateRange = { start: customStartDate, end: customEndDate };
+        break;
+      default:
+        dateRange = { start: startOfMonth(now), end: endOfMonth(now) };
+    }
+    let invoicesToCalculate = invoices || [];
+
+    // Apply date filter to stats
+    if (dateRange) {
+      invoicesToCalculate = invoicesToCalculate.filter(invoice => {
+        // Use created_at for filtering (when invoice was created), not due_date (when payment is due)
+        const invoiceDate = new Date(invoice.created_at);
+        return invoiceDate >= dateRange.start && invoiceDate <= dateRange.end;
+      });
+    }
+
+    return invoicesToCalculate.reduce((acc, invoice) => {
+      // Use base_amount for multi-currency support
+      const amount = invoice.base_amount || invoice.total || 0;
+      // Only add to total if NOT draft (drafts haven't been sent to clients yet)
+      if (invoice.status !== 'draft') {
+        acc.total += amount;
+      }
+      if (invoice.status === 'paid') acc.paid += amount;
+      if (invoice.status === 'overdue') acc.overdue += amount;
+      if (invoice.status === 'sent') acc.pending += amount;
+      if (invoice.status === 'draft') acc.draft += amount;
+      return acc;
+    }, { total: 0, paid: 0, overdue: 0, pending: 0, draft: 0 });
+  }, [invoices, selectedDateRange, customStartDate, customEndDate]);
 
   if (error) {
     return (
@@ -205,20 +347,62 @@ export default function InvoicesScreen() {
               <Text style={styles.headerSubtitle}>Manage your</Text>
               <Text style={styles.headerTitle}>Invoices</Text>
             </View>
-            <TouchableOpacity
-              style={styles.addButton}
-              onPress={handleCreateInvoice}
-            >
-              <BlurView intensity={80} tint="light" style={styles.addButtonBlur}>
-                <LinearGradient
-                  colors={['rgba(255,255,255,0.9)', 'rgba(255,255,255,0.7)'] as const}
-                  style={styles.addButtonInner}
-                >
-                  <Feather name="plus" size={24} color="#7C3AED" />
-                </LinearGradient>
-              </BlurView>
-            </TouchableOpacity>
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                style={styles.searchButton}
+                onPress={() => {
+                  setShowSearch(!showSearch);
+                  if (showSearch) {
+                    setSearchQuery('');
+                    Keyboard.dismiss();
+                  }
+                }}
+              >
+                <BlurView intensity={80} tint="light" style={styles.searchButtonBlur}>
+                  <View style={styles.searchButtonInner}>
+                    <Feather name={showSearch ? "x" : "search"} size={20} color="#7C3AED" />
+                  </View>
+                </BlurView>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={handleCreateInvoice}
+              >
+                <BlurView intensity={80} tint="light" style={styles.addButtonBlur}>
+                  <LinearGradient
+                    colors={['rgba(255,255,255,0.9)', 'rgba(255,255,255,0.7)'] as const}
+                    style={styles.addButtonInner}
+                  >
+                    <Feather name="plus" size={24} color="#7C3AED" />
+                  </LinearGradient>
+                </BlurView>
+              </TouchableOpacity>
+            </View>
           </View>
+
+          {/* Search Bar */}
+          {showSearch && (
+            <View style={styles.searchContainer}>
+              <View style={styles.searchInputWrapper}>
+                <Feather name="search" size={18} color="rgba(255,255,255,0.6)" />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search by invoice #, client, or status..."
+                  placeholderTextColor="rgba(255,255,255,0.6)"
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  autoFocus
+                  returnKeyType="search"
+                  onSubmitEditing={() => Keyboard.dismiss()}
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setSearchQuery('')}>
+                    <Feather name="x-circle" size={18} color="rgba(255,255,255,0.6)" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          )}
           
           <ScrollView 
             horizontal 
@@ -237,11 +421,11 @@ export default function InvoicesScreen() {
                 style={[styles.statCard, selectedFilter === 'all' && styles.statCardActive]}
               >
                 <View style={styles.statIconContainer}>
-                  <MaterialIcons name="receipt" size={20} color="rgba(255,255,255,0.9)" />
+                  <MaterialIcons name="receipt" size={16} color="rgba(255,255,255,0.9)" />
                 </View>
-                <Text style={styles.statLabel}>Total Revenue ({baseCurrency})</Text>
+                <Text style={styles.statLabel}>Total ({baseCurrency})</Text>
                 <Text style={styles.statValue}>{formatCurrency(stats.total)}</Text>
-                <Text style={styles.statCount}>{invoices?.length || 0} invoices</Text>
+                <Text style={styles.statCount}>{filteredInvoices?.length || 0} invoices</Text>
               </LinearGradient>
             </TouchableOpacity>
             
@@ -256,14 +440,14 @@ export default function InvoicesScreen() {
                 style={[styles.statCard, selectedFilter === 'paid' && styles.statCardActive]}
               >
                 <View style={[styles.statIconContainer, { backgroundColor: 'rgba(16,185,129,0.3)' }]}>
-                  <MaterialIcons name="check-circle" size={20} color="#10B981" />
+                  <MaterialIcons name="check-circle" size={16} color="#10B981" />
                 </View>
                 <Text style={styles.statLabel}>Paid</Text>
                 <Text style={[styles.statValue, { color: selectedFilter === 'paid' ? '#10B981' : '#FFFFFF' }]}>
                   {formatCurrency(stats.paid)}
                 </Text>
                 <Text style={styles.statCount}>
-                  {invoices?.filter(i => i.status === 'paid').length || 0} invoices
+                  {filteredInvoices?.filter(i => i.status === 'paid').length || 0} invoices
                 </Text>
               </LinearGradient>
             </TouchableOpacity>
@@ -279,43 +463,77 @@ export default function InvoicesScreen() {
                 style={[styles.statCard, selectedFilter === 'sent' && styles.statCardActive]}
               >
                 <View style={[styles.statIconContainer, { backgroundColor: 'rgba(139,92,246,0.3)' }]}>
-                  <MaterialIcons name="send" size={20} color="#8B5CF6" />
+                  <MaterialIcons name="send" size={16} color="#8B5CF6" />
                 </View>
                 <Text style={styles.statLabel}>Pending</Text>
                 <Text style={[styles.statValue, { color: selectedFilter === 'sent' ? '#8B5CF6' : '#FFFFFF' }]}>
                   {formatCurrency(stats.pending)}
                 </Text>
                 <Text style={styles.statCount}>
-                  {invoices?.filter(i => i.status === 'sent').length || 0} invoices
+                  {filteredInvoices?.filter(i => i.status === 'sent').length || 0} invoices
                 </Text>
               </LinearGradient>
             </TouchableOpacity>
             
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => setSelectedFilter('overdue')}
               activeOpacity={0.8}
             >
               <LinearGradient
-                colors={selectedFilter === 'overdue' 
+                colors={selectedFilter === 'overdue'
                   ? ['rgba(239,68,68,0.3)', 'rgba(239,68,68,0.2)'] as const
                   : ['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.1)'] as const}
                 style={[styles.statCard, selectedFilter === 'overdue' && styles.statCardActive]}
               >
                 <View style={[styles.statIconContainer, { backgroundColor: 'rgba(239,68,68,0.3)' }]}>
-                  <MaterialIcons name="error" size={20} color="#EF4444" />
+                  <MaterialIcons name="error" size={16} color="#EF4444" />
                 </View>
                 <Text style={styles.statLabel}>Overdue</Text>
                 <Text style={[styles.statValue, { color: selectedFilter === 'overdue' ? '#EF4444' : '#FFFFFF' }]}>
                   {formatCurrency(stats.overdue)}
                 </Text>
                 <Text style={styles.statCount}>
-                  {invoices?.filter(i => i.status === 'overdue').length || 0} invoices
+                  {filteredInvoices?.filter(i => i.status === 'overdue').length || 0} invoices
+                </Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setSelectedFilter('draft')}
+              activeOpacity={0.8}
+            >
+              <LinearGradient
+                colors={selectedFilter === 'draft'
+                  ? ['rgba(107,114,128,0.3)', 'rgba(107,114,128,0.2)'] as const
+                  : ['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.1)'] as const}
+                style={[styles.statCard, selectedFilter === 'draft' && styles.statCardActive]}
+              >
+                <View style={[styles.statIconContainer, { backgroundColor: 'rgba(107,114,128,0.3)' }]}>
+                  <MaterialIcons name="edit" size={16} color="#6B7280" />
+                </View>
+                <Text style={styles.statLabel}>Draft</Text>
+                <Text style={[styles.statValue, { color: selectedFilter === 'draft' ? '#6B7280' : '#FFFFFF' }]}>
+                  {formatCurrency(stats.draft)}
+                </Text>
+                <Text style={styles.statCount}>
+                  {filteredInvoices?.filter(i => i.status === 'draft').length || 0} invoices
                 </Text>
               </LinearGradient>
             </TouchableOpacity>
           </ScrollView>
         </View>
       </LinearGradient>
+
+      <DateFilterBar
+        selectedPeriod={selectedDateRange}
+        onPeriodChange={handleDateRangeSelect}
+        customRange={selectedDateRange === 'custom' ? { start: customStartDate, end: customEndDate } : null}
+        onClearCustom={() => {
+          setSelectedDateRange('mtd');
+          setCustomStartDate(startOfMonth(new Date()));
+          setCustomEndDate(new Date());
+        }}
+      />
 
       {isLoading ? (
         <View style={styles.loadingContainer}>
@@ -382,6 +600,99 @@ export default function InvoicesScreen() {
           }
         />
       )}
+
+      {/* Custom Date Range Modal */}
+      <Modal
+        visible={showCustomModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCustomModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.customModalContainer}>
+            <View style={styles.customModalHeader}>
+              <Text style={styles.customModalTitle}>Select Date Range</Text>
+              <TouchableOpacity onPress={() => setShowCustomModal(false)}>
+                <Feather name="x" size={24} color="#1F2937" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.customModalContent}>
+              <View style={styles.datePickerSection}>
+                <Text style={styles.dateLabel}>Start Date</Text>
+                <TouchableOpacity
+                  style={styles.dateButton}
+                  onPress={() => setShowStartPicker(true)}
+                >
+                  <Feather name="calendar" size={18} color="#6B7280" />
+                  <Text style={styles.dateButtonText}>
+                    {format(customStartDate, 'MMM dd, yyyy')}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.datePickerSection}>
+                <Text style={styles.dateLabel}>End Date</Text>
+                <TouchableOpacity
+                  style={styles.dateButton}
+                  onPress={() => setShowEndPicker(true)}
+                >
+                  <Feather name="calendar" size={18} color="#6B7280" />
+                  <Text style={styles.dateButtonText}>
+                    {format(customEndDate, 'MMM dd, yyyy')}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={styles.applyButton}
+                onPress={() => {
+                  setSelectedDateRange('custom');
+                  setShowCustomModal(false);
+                }}
+              >
+                <LinearGradient
+                  colors={['#8B5CF6', '#7C3AED']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.applyButtonGradient}
+                >
+                  <Text style={styles.applyButtonText}>Apply Filter</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Date Pickers */}
+      {showStartPicker && (
+        <DateTimePicker
+          value={customStartDate}
+          mode="date"
+          display="default"
+          onChange={(event, selectedDate) => {
+            setShowStartPicker(false);
+            if (selectedDate) {
+              setCustomStartDate(selectedDate);
+            }
+          }}
+        />
+      )}
+
+      {showEndPicker && (
+        <DateTimePicker
+          value={customEndDate}
+          mode="date"
+          display="default"
+          onChange={(event, selectedDate) => {
+            setShowEndPicker(false);
+            if (selectedDate) {
+              setCustomEndDate(selectedDate);
+            }
+          }}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -393,40 +704,80 @@ const styles = StyleSheet.create({
     backgroundColor: '#F9FAFB',
   },
   headerGradient: {
-    paddingBottom: Spacing.xl,
+    paddingBottom: Spacing.md,
   },
   header: {
     paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
+    paddingTop: Spacing.sm,
   },
   headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.sm,
   },
   headerSubtitle: {
-    fontSize: 14,
+    fontSize: 12,
     color: 'rgba(255,255,255,0.8)',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   headerTitle: {
-    fontSize: 32,
+    fontSize: 24,
     fontWeight: '700',
     color: '#FFFFFF',
   },
+  headerActions: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  searchButton: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  searchButtonBlur: {
+    borderRadius: BorderRadius.full,
+    overflow: 'hidden',
+  },
+  searchButtonInner: {
+    width: 44,
+    height: 44,
+    borderRadius: BorderRadius.full,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchContainer: {
+    paddingBottom: Spacing.sm,
+    paddingTop: Spacing.xs,
+  },
+  searchInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: BorderRadius.lg,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    gap: Spacing.sm,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
   statsContainer: {
-    marginTop: Spacing.sm,
+    marginTop: Spacing.xs,
   },
   statsContent: {
     paddingRight: Spacing.lg,
   },
   statCard: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.xl,
-    marginRight: Spacing.sm,
-    minWidth: 140,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.lg,
+    marginRight: Spacing.md,
+    minWidth: 110,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
   },
@@ -434,28 +785,28 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.4)',
   },
   statIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: BorderRadius.md,
+    width: 28,
+    height: 28,
+    borderRadius: BorderRadius.sm,
     backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: Spacing.sm,
+    marginBottom: Spacing.xs,
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 11,
     color: 'rgba(255,255,255,0.7)',
-    marginBottom: 4,
+    marginBottom: 2,
     fontWeight: '500',
   },
   statValue: {
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: '700',
     color: '#FFFFFF',
-    marginBottom: 2,
+    marginBottom: 1,
   },
   statCount: {
-    fontSize: 11,
+    fontSize: 10,
     color: 'rgba(255,255,255,0.6)',
   },
   addButton: {
@@ -559,8 +910,8 @@ actionArrow: {
   marginLeft: 12,
 },
   addButtonInner: {
-    width: 52,
-    height: 52,
+    width: 44,
+    height: 44,
     borderRadius: BorderRadius.full,
     justifyContent: 'center',
     alignItems: 'center',
@@ -715,5 +1066,76 @@ actionArrow: {
     color: '#9CA3AF',
     fontWeight: '600',
     marginTop: 2,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  customModalContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    width: '85%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  customModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  customModalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  customModalContent: {
+    padding: 20,
+  },
+  datePickerSection: {
+    marginBottom: 16,
+  },
+  dateLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  dateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    gap: 8,
+  },
+  dateButtonText: {
+    fontSize: 14,
+    color: '#1F2937',
+    fontWeight: '500',
+  },
+  applyButton: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginTop: 8,
+  },
+  applyButtonGradient: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  applyButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });

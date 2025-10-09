@@ -31,6 +31,7 @@ export const AddClientModal: React.FC<AddClientModalProps> = ({
   const queryClient = useQueryClient();
   
   const [name, setName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
@@ -57,6 +58,7 @@ export const AddClientModal: React.FC<AddClientModalProps> = ({
 
   const resetForm = () => {
     setName('');
+    setCompanyName('');
     setEmail('');
     setPhone('');
     setAddress('');
@@ -74,6 +76,7 @@ export const AddClientModal: React.FC<AddClientModalProps> = ({
     await createMutation.mutateAsync({
       user_id: user.id,
       name: name.trim(),
+      company_name: companyName.trim() || null,
       email: email.trim() || null,
       phone: phone.trim() || null,
       address: address.trim() || null,
@@ -100,10 +103,18 @@ export const AddClientModal: React.FC<AddClientModalProps> = ({
           <ScrollView showsVerticalScrollIndicator={false}>
             <Input
               label="Client Name *"
-              placeholder="John Doe or Company Name"
+              placeholder="John Doe"
               value={name}
               onChangeText={setName}
               icon="user"
+            />
+
+            <Input
+              label="Company Name"
+              placeholder="Company name (optional)"
+              value={companyName}
+              onChangeText={setCompanyName}
+              icon="briefcase"
             />
 
             <Input

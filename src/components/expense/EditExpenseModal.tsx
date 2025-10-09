@@ -50,10 +50,11 @@ export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [referenceNumber, setReferenceNumber] = useState('');
   const [loading, setLoading] = useState(false);
   const [taxRate, setTaxRate] = useState("0");
   const [includeTax, setIncludeTax] = useState(false);
-  
+
 const [currency, setCurrency] = useState(baseCurrency);
 const [showCurrencySelector, setShowCurrencySelector] = useState(false);
 const [convertedPreview, setConvertedPreview] = useState(0);
@@ -98,6 +99,7 @@ const CURRENCY_NAMES: Record<string, string> = {
       setSelectedVendor(expense.vendor_id || '');
       setSelectedCategory(expense.category_id || '');
       setSelectedDate(new Date(expense.date));
+      setReferenceNumber(expense.reference_number || '');
       setCurrency(expense.currency || baseCurrency);
       // Set tax fields
       if (expense.tax_rate && expense.tax_rate > 0) {
@@ -181,6 +183,7 @@ React.useEffect(() => {
       vendor_id: selectedVendor || null,
       category_id: selectedCategory || null,
       date: format(selectedDate, 'yyyy-MM-dd'),
+      reference_number: referenceNumber || null,
       tax_rate: taxRateNum || null,
       tax_amount: taxAmountCalc || null,
       currency: currency,
@@ -504,6 +507,15 @@ React.useEffect(() => {
                     </TouchableOpacity>
                   )}
                 </View>
+
+                {/* Reference Number */}
+                <Input
+                  label="Reference Number (Optional)"
+                  placeholder="Invoice #, PO #, etc."
+                  value={referenceNumber}
+                  onChangeText={setReferenceNumber}
+                  icon="hash"
+                />
 
                 {/* Category Selection */}
                 <View style={styles.categorySection}>

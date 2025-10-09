@@ -44,7 +44,7 @@ export const getRecentTransactions = async (userId: string, limit = 5) => {
       date,
       created_at,
       category:categories(name, color),
-      vendor:vendors(name)
+      vendor_detail:vendors(name)
     `)
     .eq('user_id', userId)
     .order('date', { ascending: false })
@@ -264,12 +264,12 @@ export const getExpenses = async (userId: string, limit = 50) => {
     .select(`
       *,
       category:categories(*),
-      vendor:vendors(*)
+      vendor_detail:vendors(*)
     `)
     .eq('user_id', userId)
     .order('date', { ascending: false })
     .limit(limit);
-  
+
   if (error) throw error;
   return data;
 };
@@ -286,10 +286,10 @@ export const createExpense = async (expense: any) => {
     .select(`
       *,
       category:categories(*),
-      vendor:vendors(*)
+      vendor_detail:vendors(*)
     `)
     .single();
-  
+
   if (error) throw error;
   return data;
 };
@@ -307,10 +307,10 @@ export const updateExpense = async (expenseId: string, updates: any) => {
     .select(`
       *,
       category:categories(*),
-      vendor:vendors(*)
+      vendor_detail:vendors(*)
     `)
     .single();
-  
+
   if (error) throw error;
   return data;
 };
@@ -751,12 +751,12 @@ export const getIncome = async (incomeId: string, userId: string) => {
 
 // Get single expense record
 export const getExpense = async (expenseId: string, userId: string) => {
-  const { data, error } = await supabase
+  const { data, error} = await supabase
     .from('expenses')
     .select(`
       *,
       category:categories(*),
-      vendor:vendors(*)
+      vendor_detail:vendors(*)
     `)
     .eq('id', expenseId)
     .eq('user_id', userId)

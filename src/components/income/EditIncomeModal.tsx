@@ -621,12 +621,12 @@ React.useEffect(() => {
             <ScrollView showsVerticalScrollIndicator={false}>
               <Input
                 label="Client Name *"
-                placeholder="John Doe or Company Name"
+                placeholder="John Doe"
                 value={newClientData.name}
                 onChangeText={(text) => setNewClientData({ ...newClientData, name: text })}
                 icon="user"
               />
-              
+
               <Input
                 label="Email"
                 placeholder="client@example.com"

@@ -642,11 +642,12 @@ export const getRecurringInvoices = async (userId: string) => {
     .from('recurring_invoices')
     .select(`
       *,
-      client:clients(*)
+      client:clients(*),
+      original_invoice:invoices!invoice_id(invoice_number)
     `)
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
-  
+
   if (error) throw error;
   return data || [];
 };

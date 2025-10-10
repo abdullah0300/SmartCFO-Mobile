@@ -1,5 +1,5 @@
 // src/screens/RecurringInvoicesScreen.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   View,
@@ -11,6 +11,8 @@ import {
   Alert,
   RefreshControl,
   Dimensions,
+  TextInput,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -19,6 +21,7 @@ import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { format, parseISO } from 'date-fns';
 import { useNavigation } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
+import { BlurView } from 'expo-blur';
 
 import { useAuth } from '../hooks/useAuth';
 import { useSettings } from '../contexts/SettingsContext';
@@ -41,6 +44,8 @@ export default function RecurringInvoicesScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<'all' | 'active' | 'paused'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
 
   useFocusEffect(
   React.useCallback(() => {
@@ -91,12 +96,35 @@ export default function RecurringInvoicesScreen() {
     return labels[frequency as keyof typeof labels] || frequency;
   };
 
-  const filteredInvoices = recurringInvoices.filter(invoice => {
-    if (filter === 'all') return true;
-    if (filter === 'active') return invoice.is_active;
-    if (filter === 'paused') return !invoice.is_active;
-    return true;
-  });
+  const filteredInvoices = useMemo(() => {
+    let filtered = recurringInvoices;
+
+    // Apply status filter
+    if (filter !== 'all') {
+      if (filter === 'active') filtered = filtered.filter(i => i.is_active);
+      if (filter === 'paused') filtered = filtered.filter(i => !i.is_active);
+    }
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(invoice => {
+        const clientName = invoice.client?.name?.toLowerCase() || '';
+        const frequency = getFrequencyLabel(invoice.frequency).toLowerCase();
+        const status = invoice.is_active ? 'active' : 'paused';
+        const invoiceNumber = invoice.original_invoice?.invoice_number?.toLowerCase() || '';
+
+        return (
+          clientName.includes(query) ||
+          frequency.includes(query) ||
+          status.includes(query) ||
+          invoiceNumber.includes(query)
+        );
+      });
+    }
+
+    return filtered;
+  }, [recurringInvoices, filter, searchQuery]);
 
   const activeInvoices = recurringInvoices.filter(i => i.is_active);
   const monthlyValue = activeInvoices.reduce((sum, i) => sum + (i.template_data?.total || 0), 0);
@@ -118,65 +146,107 @@ export default function RecurringInvoicesScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Enhanced Header with Gradient */}
+      {/* Header */}
       <LinearGradient
-        colors={['#6366F1', '#8B5CF6', '#A855F7']}
+        colors={['#8B5CF6', '#7C3AED', '#6D28D9']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={styles.header}
+        style={styles.headerGradient}
       >
-        <View style={styles.headerContent}>
-          <TouchableOpacity 
-            onPress={() => navigation.goBack()}
-            style={styles.backButton}
-          >
-            <Feather name="arrow-left" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-          
-          <View style={styles.headerTextContainer}>
-            <Text style={styles.headerTitle}>Recurring Invoices</Text>
-            <Text style={styles.headerSubtitle}>Manage automated billing</Text>
+        <View style={styles.header}>
+          <View style={styles.headerTop}>
+            <View style={styles.headerLeft}>
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                style={styles.backButton}
+              >
+                <Feather name="arrow-left" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+              <View>
+                <Text style={styles.headerSubtitle}>Manage your</Text>
+                <Text style={styles.headerTitle}>Recurring Invoices</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={styles.searchButton}
+              onPress={() => {
+                setShowSearch(!showSearch);
+                if (showSearch) {
+                  setSearchQuery('');
+                  Keyboard.dismiss();
+                }
+              }}
+            >
+              <BlurView intensity={80} tint="light" style={styles.searchButtonBlur}>
+                <View style={styles.searchButtonInner}>
+                  <Feather name={showSearch ? "x" : "search"} size={18} color="#7C3AED" />
+                </View>
+              </BlurView>
+            </TouchableOpacity>
           </View>
-          
-          <View style={{ width: 40 }} />
+
+          {/* Search Bar */}
+          {showSearch && (
+            <View style={styles.searchContainer}>
+              <View style={styles.searchInputWrapper}>
+                <Feather name="search" size={16} color="rgba(255,255,255,0.6)" />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search by client, invoice # or frequency..."
+                  placeholderTextColor="rgba(255,255,255,0.6)"
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  autoFocus
+                  returnKeyType="search"
+                  onSubmitEditing={() => Keyboard.dismiss()}
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setSearchQuery('')}>
+                    <Feather name="x-circle" size={16} color="rgba(255,255,255,0.6)" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          )}
         </View>
       </LinearGradient>
 
-      {/* Enhanced Statistics Cards */}
+      {/* Statistics Cards */}
       <View style={styles.statsContainer}>
         <View style={styles.statCard}>
           <LinearGradient
             colors={['#10B981', '#059669']}
             style={styles.statIconGradient}
           >
-            <MaterialIcons name="check-circle" size={20} color="#FFFFFF" />
+            <MaterialIcons name="check-circle" size={14} color="#FFFFFF" />
           </LinearGradient>
           <Text style={styles.statValue}>{activeInvoices.length}</Text>
           <Text style={styles.statLabel}>Active</Text>
         </View>
-        
+
         <View style={[styles.statCard, styles.statCardMain]}>
           <LinearGradient
             colors={['#6366F1', '#8B5CF6']}
             style={styles.statIconGradient}
           >
-            <MaterialIcons name="attach-money" size={20} color="#FFFFFF" />
+            <MaterialIcons name="attach-money" size={14} color="#FFFFFF" />
           </LinearGradient>
           <Text style={[styles.statValue, styles.statValueMain]}>
             {formatCurrency(monthlyValue)}
           </Text>
-          <Text style={styles.statLabel}>Monthly Revenue</Text>
+          <Text style={styles.statLabel}>Monthly</Text>
         </View>
-        
+
         <View style={styles.statCard}>
           <LinearGradient
             colors={['#F59E0B', '#D97706']}
             style={styles.statIconGradient}
           >
-            <Feather name="clock" size={20} color="#FFFFFF" />
+            <Feather name="clock" size={14} color="#FFFFFF" />
           </LinearGradient>
           <Text style={styles.statValue}>{dueThisWeek}</Text>
-          <Text style={styles.statLabel}>Due This Week</Text>
+          <Text style={styles.statLabel}>Due Week</Text>
         </View>
       </View>
 
@@ -248,17 +318,34 @@ export default function RecurringInvoicesScreen() {
                 !recurring.is_active && styles.recurringCardInactive
               ]}
             >
-              {/* Enhanced Card Header */}
+              {/* Card Header */}
               <View style={styles.cardHeader}>
                 <View style={styles.cardHeaderLeft}>
-                  <Text style={styles.clientName}>
-                    {recurring.client?.name || 'No Client Set'}
-                  </Text>
-                  <View style={styles.frequencyContainer}>
-                    <MaterialIcons name="repeat" size={14} color="#6366F1" />
-                    <Text style={styles.frequency}>
-                      {getFrequencyLabel(recurring.frequency)}
+                  <View style={styles.invoiceNumberRow}>
+                    {recurring.original_invoice?.invoice_number && (
+                      <Text style={styles.invoiceNumber}>
+                        #{recurring.original_invoice.invoice_number}
+                      </Text>
+                    )}
+                    <Text style={styles.clientName}>
+                      {recurring.client?.name || 'No Client Set'}
                     </Text>
+                  </View>
+                  <View style={styles.badgeRow}>
+                    <View style={styles.frequencyContainer}>
+                      <MaterialIcons name="repeat" size={12} color="#6366F1" />
+                      <Text style={styles.frequency}>
+                        {getFrequencyLabel(recurring.frequency)}
+                      </Text>
+                    </View>
+                    {recurring.template_data.items && recurring.template_data.items.length > 0 && (
+                      <View style={styles.itemsBadge}>
+                        <Feather name="list" size={10} color="#6B7280" />
+                        <Text style={styles.itemsText}>
+                          {recurring.template_data.items.length} item{recurring.template_data.items.length !== 1 ? 's' : ''}
+                        </Text>
+                      </View>
+                    )}
                   </View>
                 </View>
                 <View style={[
@@ -278,50 +365,90 @@ export default function RecurringInvoicesScreen() {
                 </View>
               </View>
 
-              {/* Enhanced Card Body */}
+              {/* Card Body */}
               <View style={styles.cardBody}>
-                <View style={styles.infoGrid}>
-                  <View style={styles.infoCard}>
-                    <View style={styles.infoHeader}>
-                      <Feather name="calendar" size={16} color="#6366F1" />
-                      <Text style={styles.infoLabel}>Next Invoice</Text>
-                    </View>
-                    <Text style={styles.infoValue}>
-                      {format(parseISO(recurring.next_date), 'MMM dd, yyyy')}
+                {/* Amount Row */}
+                <View style={styles.amountRow}>
+                  <View style={styles.amountSection}>
+                    <Text style={styles.amountLabel}>Subtotal</Text>
+                    <Text style={styles.amountValue}>
+                      {formatCurrency(recurring.template_data.subtotal)}
                     </Text>
                   </View>
-                  
-                  <View style={styles.infoCard}>
-                    <View style={styles.infoHeader}>
-                      <MaterialIcons name="attach-money" size={16} color="#10B981" />
-                      <Text style={styles.infoLabel}>Amount</Text>
+                  {recurring.template_data.tax_rate > 0 && (
+                    <View style={styles.amountSection}>
+                      <Text style={styles.amountLabel}>Tax ({recurring.template_data.tax_rate}%)</Text>
+                      <Text style={styles.amountValue}>
+                        {formatCurrency(recurring.template_data.tax_amount)}
+                      </Text>
                     </View>
-                    <Text style={[styles.infoValue, styles.infoValueAmount]}>
+                  )}
+                  <View style={[styles.amountSection, styles.amountSectionTotal]}>
+                    <Text style={styles.amountLabel}>Total</Text>
+                    <Text style={styles.amountValueTotal}>
                       {formatCurrency(recurring.template_data.total)}
                     </Text>
                   </View>
                 </View>
 
-                {/* Additional Info */}
-                <View style={styles.additionalInfo}>
-                  {recurring.last_generated && (
-                    <View style={styles.additionalInfoItem}>
-                      <Feather name="check-circle" size={12} color="#10B981" />
-                      <Text style={styles.additionalInfoText}>
-                        Last generated: {format(parseISO(recurring.last_generated), 'MMM dd')}
+                {/* Info Grid */}
+                <View style={styles.infoGrid}>
+                  <View style={styles.infoItem}>
+                    <Feather name="calendar" size={14} color="#6366F1" />
+                    <View style={styles.infoContent}>
+                      <Text style={styles.infoLabel}>Next Invoice</Text>
+                      <Text style={styles.infoValue}>
+                        {format(parseISO(recurring.next_date), 'MMM dd, yyyy')}
                       </Text>
+                    </View>
+                  </View>
+
+                  {recurring.last_generated && (
+                    <View style={styles.infoItem}>
+                      <Feather name="check-circle" size={14} color="#10B981" />
+                      <View style={styles.infoContent}>
+                        <Text style={styles.infoLabel}>Last Generated</Text>
+                        <Text style={styles.infoValue}>
+                          {format(parseISO(recurring.last_generated), 'MMM dd, yyyy')}
+                        </Text>
+                      </View>
                     </View>
                   )}
 
                   {recurring.end_date && (
-                    <View style={styles.additionalInfoItem}>
-                      <MaterialIcons name="event-busy" size={12} color="#EF4444" />
-                      <Text style={[styles.additionalInfoText, { color: '#EF4444' }]}>
-                        Ends: {format(parseISO(recurring.end_date), 'MMM dd, yyyy')}
-                      </Text>
+                    <View style={styles.infoItem}>
+                      <MaterialIcons name="event-busy" size={14} color="#EF4444" />
+                      <View style={styles.infoContent}>
+                        <Text style={styles.infoLabel}>End Date</Text>
+                        <Text style={[styles.infoValue, { color: '#EF4444' }]}>
+                          {format(parseISO(recurring.end_date), 'MMM dd, yyyy')}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+
+                  {recurring.template_data.currency && (
+                    <View style={styles.infoItem}>
+                      <MaterialIcons name="attach-money" size={14} color="#F59E0B" />
+                      <View style={styles.infoContent}>
+                        <Text style={styles.infoLabel}>Currency</Text>
+                        <Text style={styles.infoValue}>
+                          {recurring.template_data.currency}
+                        </Text>
+                      </View>
                     </View>
                   )}
                 </View>
+
+                {/* Notes Preview */}
+                {recurring.template_data.notes && (
+                  <View style={styles.notesPreview}>
+                    <Feather name="file-text" size={12} color="#6B7280" />
+                    <Text style={styles.notesText} numberOfLines={1}>
+                      {recurring.template_data.notes}
+                    </Text>
+                  </View>
+                )}
               </View>
 
               {/* Enhanced Actions */}
@@ -386,54 +513,91 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontWeight: '500',
   },
+  headerGradient: {
+    paddingBottom: 12,
+  },
   header: {
     paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 16,
+    paddingTop: 8,
   },
-  headerContent: {
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 12,
+    flex: 1,
   },
   backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
-  headerTextContainer: {
-    alignItems: 'center',
+  headerSubtitle: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.8)',
+    marginBottom: 1,
   },
   headerTitle: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#FFFFFF',
-    letterSpacing: -0.3,
   },
-  headerSubtitle: {
-    fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.8)',
-    marginTop: 1,
-    fontWeight: '400',
+  searchButton: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  searchButtonBlur: {
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  searchButtonInner: {
+    width: 36,
+    height: 36,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchContainer: {
+    paddingTop: 12,
+    paddingBottom: 4,
+  },
+  searchInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#FFFFFF',
   },
 
-  // Enhanced Stats
+  // Stats
   statsContainer: {
     flexDirection: 'row',
     paddingHorizontal: 20,
-    marginTop: -8,
-    marginBottom: 16,
+    marginTop: 12,
+    marginBottom: 12,
     gap: 8,
   },
   statCard: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    padding: 12,
+    padding: 8,
     borderRadius: 8,
     alignItems: 'center',
     borderWidth: 1,
@@ -443,25 +607,25 @@ const styles = StyleSheet.create({
     borderColor: '#D1D5DB',
   },
   statIconGradient: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 4,
   },
   statValue: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '700',
     color: '#1F2937',
-    marginBottom: 2,
+    marginBottom: 1,
   },
   statValueMain: {
-    fontSize: 15,
+    fontSize: 13,
     color: '#6366F1',
   },
   statLabel: {
-    fontSize: 11,
+    fontSize: 9,
     color: '#6B7280',
     fontWeight: '500',
     textAlign: 'center',
@@ -567,22 +731,54 @@ const styles = StyleSheet.create({
   cardHeaderLeft: {
     flex: 1,
   },
+  invoiceNumberRow: {
+    marginBottom: 6,
+  },
+  invoiceNumber: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6366F1',
+    marginBottom: 2,
+  },
   clientName: {
     fontSize: 16,
     fontWeight: '600',
     color: '#1F2937',
     letterSpacing: -0.2,
-    marginBottom: 4,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
   },
   frequencyContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
   },
   frequency: {
-    fontSize: 14,
+    fontSize: 11,
     color: '#6366F1',
     fontWeight: '600',
+  },
+  itemsBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  itemsText: {
+    fontSize: 10,
+    color: '#6B7280',
+    fontWeight: '500',
   },
   statusBadge: {
     paddingHorizontal: 12,
@@ -617,54 +813,75 @@ const styles = StyleSheet.create({
   cardBody: {
     padding: 16,
   },
-  infoGrid: {
+  amountRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginBottom: 12,
-  },
-  infoCard: {
-    flex: 1,
     backgroundColor: '#F9FAFB',
     padding: 12,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#F3F4F6',
+    marginBottom: 12,
+    gap: 12,
   },
-  infoHeader: {
+  amountSection: {
+    flex: 1,
+  },
+  amountSectionTotal: {
+    borderLeftWidth: 1,
+    borderLeftColor: '#E5E7EB',
+    paddingLeft: 12,
+  },
+  amountLabel: {
+    fontSize: 10,
+    color: '#6B7280',
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  amountValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  amountValueTotal: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#6366F1',
+  },
+  infoGrid: {
+    gap: 10,
+  },
+  infoItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 6,
+    gap: 10,
+    paddingVertical: 6,
+  },
+  infoContent: {
+    flex: 1,
   },
   infoLabel: {
     fontSize: 11,
     color: '#6B7280',
     fontWeight: '500',
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
+    marginBottom: 2,
   },
   infoValue: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#1F2937',
   },
-  infoValueAmount: {
-    color: '#10B981',
-  },
-
-  additionalInfo: {
-    gap: 8,
-  },
-  additionalInfoItem: {
+  notesPreview: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 4,
+    marginTop: 8,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
   },
-  additionalInfoText: {
-    fontSize: 13,
-    color: '#64748B',
-    fontWeight: '500',
+  notesText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontStyle: 'italic',
+    flex: 1,
   },
 
   cardActions: {

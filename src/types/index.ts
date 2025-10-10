@@ -142,6 +142,10 @@ export interface RecurringInvoice {
   user_id: string;
   client_id?: string;
   client?: Client;
+  invoice_id?: string;
+  original_invoice?: {
+    invoice_number: string;
+  };
   template_data: {
     invoice_number?: string;
     subtotal: number;

@@ -241,3 +241,33 @@ export interface Settings {
   created_at?: string;
   updated_at?: string;
 }
+
+export interface Notification {
+  id: string;
+  user_id: string;
+  type: 'invoice_paid' | 'invoice_overdue' | 'payment_received' | 'expense_high' | 'tax_reminder' | 'expense_added' | 'budget_exceeded';
+  title: string;
+  message: string;
+  metadata?: {
+    amount?: number;
+    client_name?: string;
+    invoice_number?: string;
+    invoice_id?: string;
+    income_id?: string;
+    expense_id?: string;
+    currency?: string;
+  };
+  // Keep data as alias for backward compatibility
+  data?: {
+    amount?: number;
+    client_name?: string;
+    invoice_number?: string;
+    invoice_id?: string;
+    income_id?: string;
+    expense_id?: string;
+    currency?: string;
+  };
+  is_read: boolean;
+  created_at: string;
+  read_at?: string;
+}

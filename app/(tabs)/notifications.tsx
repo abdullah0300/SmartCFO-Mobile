@@ -17,9 +17,9 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useSettings } from '../../src/contexts/SettingsContext';
-import { 
-  getNotifications, 
-  markNotificationAsRead, 
+import {
+  getNotifications,
+  markNotificationAsRead,
   markAllNotificationsAsRead,
   deleteNotifications
 } from '../../src/services/api';
@@ -27,23 +27,27 @@ import { Colors, Spacing, BorderRadius } from '../../src/constants/Colors';
 import { formatDistanceToNow } from 'date-fns';
 import * as Haptics from 'expo-haptics';
 import { RootStackParamList } from '../../App';
+import { Notification } from '../../src/types';
+import { Swipeable } from 'react-native-gesture-handler';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 interface NotificationItemProps {
-  notification: any;
-  onPress: (notification: any) => void;
+  notification: Notification;
+  onPress: (notification: Notification) => void;
+  onDelete: (notificationId: string) => void;
   formatCurrency: (amount: number | null | undefined) => string;
   baseCurrency: string;
 }
 
-const NotificationItem: React.FC<NotificationItemProps> = ({ 
-  notification, 
+const NotificationItem: React.FC<NotificationItemProps> = ({
+  notification,
   onPress,
+  onDelete,
   formatCurrency,
   baseCurrency
 }) => {
-  
+
   const getIcon = () => {
     switch (notification.type) {
       case 'invoice_paid':
@@ -63,66 +67,105 @@ const NotificationItem: React.FC<NotificationItemProps> = ({
 
   const icon = getIcon();
 
-  // Format notification message with proper currency
-  const formatMessage = (message: string, data: any) => {
+  // Format notification message with proper currency (matches webapp logic)
+  const formatMessage = (message: string) => {
     let formattedMessage = message;
-    
-    // Handle amount formatting
-    if (data?.amount !== undefined) {
-      const formattedAmount = formatCurrency(data.amount);
-      formattedMessage = formattedMessage.replace('{{amount}}', formattedAmount);
+
+    // Get data from either metadata or data field (backend uses metadata, but support both)
+    const notifData = notification.metadata || notification.data;
+
+    // Check if notification was already formatted at creation
+    if (notifData?.formatted_at_creation) {
+      return formattedMessage; // Already formatted, return as-is
     }
-    
-    // Handle client name
-    if (data?.client_name) {
-      formattedMessage = formattedMessage.replace('{{client}}', data.client_name);
+
+    // Legacy formatting for old notifications
+    if (notifData?.amount !== undefined) {
+      const amount = notifData.amount;
+      const currency = notifData.currency || baseCurrency;
+      // Replace dollar amounts like $500 or $1,000.00 with properly formatted currency
+      formattedMessage = formattedMessage.replace(/\$[\d,]+\.?\d*/g, () => {
+        return formatCurrency(Math.abs(amount), { currency });
+      });
+    } else {
+      // Fallback: parse amount from message if metadata doesn't have it
+      formattedMessage = formattedMessage.replace(/\$[\d,]+\.?\d*/g, (match: string) => {
+        const amount = parseFloat(match.replace(/[$,]/g, ''));
+        return formatCurrency(Math.abs(amount), { currency: baseCurrency });
+      });
     }
-    
-    // Handle invoice number
-    if (data?.invoice_number) {
-      formattedMessage = formattedMessage.replace('{{invoice}}', `#${data.invoice_number}`);
+
+    // Handle client name placeholders
+    if (notifData?.client_name) {
+      formattedMessage = formattedMessage.replace('{{client}}', notifData.client_name);
     }
-    
+
+    // Handle invoice number placeholders
+    if (notifData?.invoice_number) {
+      formattedMessage = formattedMessage.replace('{{invoice}}', `#${notifData.invoice_number}`);
+    }
+
     return formattedMessage;
   };
 
-  return (
+  const renderRightActions = () => (
     <TouchableOpacity
-      style={styles.notificationItem}
-      onPress={() => onPress(notification)}
-      activeOpacity={0.7}
+      style={styles.deleteButton}
+      onPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        onDelete(notification.id);
+      }}
     >
-      <View style={[styles.iconContainer, { backgroundColor: icon.color + '15' }]}>
-        {icon.isMaterial ? (
-          <MaterialIcons name={icon.name as any} size={20} color={icon.color} />
-        ) : (
-          <Feather name={icon.name as any} size={20} color={icon.color} />
-        )}
-      </View>
-      
-      <View style={styles.content}>
-        <View style={styles.contentHeader}>
-          <Text style={styles.title}>{notification.title}</Text>
-          {!notification.is_read && <View style={styles.unreadDot} />}
-        </View>
-        
-        <Text style={styles.message} numberOfLines={2}>
-          {formatMessage(notification.message, notification.data)}
-        </Text>
-        
-        <View style={styles.metaRow}>
-          <Text style={styles.time}>
-            {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
-          </Text>
-          
-          {notification.data?.currency && notification.data.currency !== baseCurrency && (
-            <View style={styles.currencyBadge}>
-              <Text style={styles.currencyText}>{notification.data.currency}</Text>
-            </View>
+      <Feather name="trash-2" size={20} color="#FFFFFF" />
+      <Text style={styles.deleteButtonText}>Delete</Text>
+    </TouchableOpacity>
+  );
+
+  return (
+    <Swipeable
+      renderRightActions={renderRightActions}
+      overshootRight={false}
+    >
+      <TouchableOpacity
+        style={styles.notificationItem}
+        onPress={() => onPress(notification)}
+        activeOpacity={0.7}
+      >
+        <View style={[styles.iconContainer, { backgroundColor: icon.color + '15' }]}>
+          {icon.isMaterial ? (
+            <MaterialIcons name={icon.name as any} size={20} color={icon.color} />
+          ) : (
+            <Feather name={icon.name as any} size={20} color={icon.color} />
           )}
         </View>
-      </View>
-    </TouchableOpacity>
+
+        <View style={styles.content}>
+          <View style={styles.contentHeader}>
+            <Text style={styles.title}>{notification.title}</Text>
+            {!notification.is_read && <View style={styles.unreadDot} />}
+          </View>
+
+          <Text style={styles.message} numberOfLines={2}>
+            {formatMessage(notification.message)}
+          </Text>
+
+          <View style={styles.metaRow}>
+            <Text style={styles.time}>
+              {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
+            </Text>
+
+            {((notification.metadata?.currency || notification.data?.currency) &&
+              (notification.metadata?.currency || notification.data?.currency) !== baseCurrency) && (
+              <View style={styles.currencyBadge}>
+                <Text style={styles.currencyText}>
+                  {notification.metadata?.currency || notification.data?.currency}
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </TouchableOpacity>
+    </Swipeable>
   );
 };
 
@@ -132,21 +175,11 @@ export default function NotificationsScreen() {
   const queryClient = useQueryClient();
   const { formatCurrency, baseCurrency } = useSettings();
   const [refreshing, setRefreshing] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'unread' | 'financial'>('all');
 
-  const { data: notifications, isLoading, refetch } = useQuery({
-    queryKey: ['notifications', user?.id, filter],
+  const { data: notifications, isLoading, refetch } = useQuery<Notification[]>({
+    queryKey: ['notifications', user?.id],
     queryFn: async () => {
       const allNotifications = await getNotifications(user!.id);
-      
-      // Filter based on selected filter
-      if (filter === 'unread') {
-        return allNotifications.filter((n: any) => !n.is_read);
-      } else if (filter === 'financial') {
-        return allNotifications.filter((n: any) => 
-          ['invoice_paid', 'invoice_overdue', 'payment_received', 'expense_high'].includes(n.type)
-        );
-      }
       return allNotifications;
     },
     enabled: !!user,
@@ -167,22 +200,84 @@ export default function NotificationsScreen() {
     },
   });
 
-  const handleNotificationPress = async (notification: any) => {
+  const deleteNotificationMutation = useMutation({
+    mutationFn: (notificationIds: string[]) => deleteNotifications(notificationIds),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    },
+  });
+
+  const handleNotificationPress = async (notification: Notification) => {
     if (!notification.is_read) {
       await markAsReadMutation.mutateAsync(notification.id);
     }
-    
+
+    // Get data from either metadata or data field
+    const notifData = notification.metadata || notification.data;
+
     // Navigate based on notification type
     switch (notification.type) {
       case 'invoice_paid':
       case 'invoice_overdue':
-        if (notification.data?.invoice_id) {
-          navigation.navigate('InvoiceView', { 
-            invoiceId: notification.data.invoice_id 
+        if (notifData?.invoice_id) {
+          navigation.navigate('InvoiceView', {
+            invoiceId: notifData.invoice_id
           });
         }
         break;
+      case 'payment_received':
+        if (notifData?.income_id) {
+          navigation.navigate('TransactionDetail', {
+            transactionId: notifData.income_id,
+            type: 'income'
+          });
+        } else {
+          // Fallback to Income tab if no specific income_id
+          navigation.navigate('Income' as any);
+        }
+        break;
+      case 'expense_high':
+      case 'expense_added':
+        if (notifData?.expense_id) {
+          navigation.navigate('TransactionDetail', {
+            transactionId: notifData.expense_id,
+            type: 'expense'
+          });
+        } else {
+          // Fallback to Expenses tab
+          navigation.navigate('Expenses' as any);
+        }
+        break;
+      case 'tax_reminder':
+        // Navigate to Reports/Tax section
+        navigation.navigate('ReportsOverview' as any);
+        break;
     }
+  };
+
+  const handleDeleteNotification = async (notificationId: string) => {
+    await deleteNotificationMutation.mutateAsync([notificationId]);
+  };
+
+  const handleDeleteAll = () => {
+    if (!notifications || notifications.length === 0) return;
+
+    Alert.alert(
+      'Delete All Notifications',
+      `Are you sure you want to delete all ${notifications.length} notification${notifications.length !== 1 ? 's' : ''}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete All',
+          style: 'destructive',
+          onPress: async () => {
+            const allIds = notifications.map(n => n.id);
+            await deleteNotificationMutation.mutateAsync(allIds);
+          }
+        }
+      ]
+    );
   };
 
   const onRefresh = async () => {
@@ -208,38 +303,29 @@ export default function NotificationsScreen() {
             </View>
           )}
         </View>
-        
-        {unreadCount > 0 && (
-          <TouchableOpacity 
-            onPress={() => markAllAsReadMutation.mutate()}
-            style={styles.markAllButton}
-          >
-            <Feather name="check-circle" size={18} color="#FFFFFF" />
-            <Text style={styles.markAllText}>Mark all read</Text>
-          </TouchableOpacity>
-        )}
-      </LinearGradient>
 
-      {/* Filter Tabs */}
-      <View style={styles.filterContainer}>
-        {(['all', 'unread', 'financial'] as const).map((tab) => (
-          <TouchableOpacity
-            key={tab}
-            onPress={() => setFilter(tab)}
-            style={[
-              styles.filterTab,
-              filter === tab && styles.filterTabActive,
-            ]}
-          >
-            <Text style={[
-              styles.filterTabText,
-              filter === tab && styles.filterTabTextActive,
-            ]}>
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+        <View style={styles.headerActions}>
+          {unreadCount > 0 && (
+            <TouchableOpacity
+              onPress={() => markAllAsReadMutation.mutate()}
+              style={styles.markAllButton}
+            >
+              <Feather name="check-circle" size={18} color="#FFFFFF" />
+              <Text style={styles.markAllText}>Mark all read</Text>
+            </TouchableOpacity>
+          )}
+
+          {notifications && notifications.length > 0 && (
+            <TouchableOpacity
+              onPress={handleDeleteAll}
+              style={styles.deleteAllButton}
+            >
+              <Feather name="trash-2" size={18} color="#FFFFFF" />
+              <Text style={styles.deleteAllText}>Clear all</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </LinearGradient>
 
       <FlatList
         data={notifications}
@@ -248,6 +334,7 @@ export default function NotificationsScreen() {
           <NotificationItem
             notification={item}
             onPress={handleNotificationPress}
+            onDelete={handleDeleteNotification}
             formatCurrency={formatCurrency}
             baseCurrency={baseCurrency}
           />
@@ -268,13 +355,9 @@ export default function NotificationsScreen() {
             >
               <Feather name="bell-off" size={32} color="#3B82F6" />
             </LinearGradient>
-            <Text style={styles.emptyText}>
-              {filter === 'unread' ? 'All caught up!' : 'No notifications'}
-            </Text>
+            <Text style={styles.emptyText}>No notifications</Text>
             <Text style={styles.emptySubtext}>
-              {filter === 'unread' 
-                ? 'You have no unread notifications'
-                : "We'll notify you about important updates"}
+              We'll notify you about important updates
             </Text>
           </View>
         }
@@ -314,6 +397,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#3B82F6',
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
   markAllButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -324,30 +413,15 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '500',
   },
-  filterContainer: {
+  deleteAllButton: {
     flexDirection: 'row',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
-    backgroundColor: '#FFFFFF',
-    gap: 8,
-  },
-  filterTab: {
-    flex: 1,
-    paddingVertical: 8,
     alignItems: 'center',
-    borderRadius: 8,
-    backgroundColor: '#F3F4F6',
+    gap: 6,
   },
-  filterTabActive: {
-    backgroundColor: '#EEF2FF',
-  },
-  filterTabText: {
-    fontSize: 13,
+  deleteAllText: {
+    fontSize: 14,
+    color: '#FFFFFF',
     fontWeight: '500',
-    color: '#6B7280',
-  },
-  filterTabTextActive: {
-    color: '#6366F1',
   },
   listContent: {
     paddingVertical: Spacing.md,
@@ -443,5 +517,21 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     textAlign: 'center',
     paddingHorizontal: Spacing.xl,
+  },
+  deleteButton: {
+    backgroundColor: '#EF4444',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 80,
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.sm,
+    borderRadius: BorderRadius.lg,
+    paddingHorizontal: 12,
+  },
+  deleteButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 4,
   },
 });

@@ -421,6 +421,7 @@ export const createVendor = async (vendor: any) => {
 // Add to src/services/api.ts
 export const getInvoices = async (userId: string, limit = 20) => {
   try {
+    // Try to get invoices with recurring_invoice_id if it exists
     const { data, error } = await supabase
       .from('invoices')
       .select(`
@@ -430,14 +431,36 @@ export const getInvoices = async (userId: string, limit = 20) => {
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(limit);
-    
+
     if (error) {
       console.error('Error fetching invoices:', error);
       throw error;
     }
-    
-    // No need to map - use the correct field name 'total'
-    return data || [];
+
+    // Get all recurring invoice template IDs
+    const { data: recurringInvoices } = await supabase
+      .from('recurring_invoices')
+      .select('id, invoice_id')
+      .eq('user_id', userId);
+
+    // Create Sets for checking
+    const recurringTemplateIds = new Set(
+      recurringInvoices?.map(r => r.invoice_id) || []
+    );
+    const recurringIds = new Set(
+      recurringInvoices?.map(r => r.id) || []
+    );
+
+    // Mark invoices as recurring based on:
+    // 1. If invoice.id matches a recurring template (invoice_id in recurring_invoices)
+    // 2. If invoice has a recurring_invoice_id field (auto-generated invoices)
+    const invoicesWithRecurringFlag = data?.map(invoice => ({
+      ...invoice,
+      is_recurring: recurringTemplateIds.has(invoice.id) ||
+                    (invoice.recurring_invoice_id && recurringIds.has(invoice.recurring_invoice_id))
+    })) || [];
+
+    return invoicesWithRecurringFlag;
   } catch (error) {
     console.error('Failed to get invoices:', error);
     return [];
@@ -455,8 +478,22 @@ export const getInvoice = async (invoiceId: string) => {
     `)
     .eq('id', invoiceId)
     .single();
-  
+
   if (error) throw error;
+
+  // Check if this invoice is recurring - either from the is_recurring field or linked to recurring_invoices
+  if (!data.is_recurring) {
+    const { data: recurringCheck } = await supabase
+      .from('recurring_invoices')
+      .select('id')
+      .or(`invoice_id.eq.${invoiceId}${data.recurring_invoice_id ? `,id.eq.${data.recurring_invoice_id}` : ''}`)
+      .maybeSingle();
+
+    if (recurringCheck) {
+      data.is_recurring = true;
+    }
+  }
+
   return data;
 };
 

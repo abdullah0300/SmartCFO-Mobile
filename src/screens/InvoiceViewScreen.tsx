@@ -11,6 +11,8 @@ import {
   Share,
   Platform,
   Dimensions,
+  Modal,
+  Linking,
 } from 'react-native';
 import * as Crypto from 'expo-crypto';
 import * as FileSystem from 'expo-file-system';
@@ -59,6 +61,7 @@ export default function InvoiceViewScreen() {
   const [generatingPDF, setGeneratingPDF] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showSendOptionsModal, setShowSendOptionsModal] = useState(false);
   const formatAmount = (amount: number, currency?: string) => {
     const symbol = getCurrencySymbol(currency || baseCurrency);
     return `${symbol}${amount.toFixed(2)}`;
@@ -85,10 +88,12 @@ export default function InvoiceViewScreen() {
         supabase.from('invoice_settings').select('*').eq('user_id', user.id).single(),
       ]);
       
+      console.log('Invoice data:', invoiceData);
+      console.log('Is recurring?', invoiceData.is_recurring);
       setInvoice(invoiceData);
       setProfile(profileData.data);
       setInvoiceSettings(settingsData.data);
-      
+
     } catch (error) {
       console.error('Error loading invoice:', error);
       Alert.alert('Error', 'Failed to load invoice');
@@ -274,8 +279,11 @@ const handleDownloadPDF = async () => {
 
 
 const handleSendEmail = async () => {
-  if (!invoice || !user || !invoice.client?.email) return;
-  
+  if (!invoice || !user || !invoice.client?.email) {
+    Alert.alert('Error', 'Client email address is required');
+    return;
+  }
+
   try {
     setSendingEmail(true);
     
@@ -327,28 +335,71 @@ const handleSendEmail = async () => {
 };
   const handleShare = async () => {
   if (!invoice) return;
-  
+
   try {
     // Generate the secure public link
     const shareUrl = await generatePublicLink();
-    
+
     if (!shareUrl) {
       Alert.alert('Error', 'Failed to generate share link');
       return;
     }
-    
+
     const message = `Invoice #${invoice.invoice_number}\n` +
       `Client: ${invoice.client?.name}\n` +
       `Amount: ${formatAmount(invoice.total, invoice.currency)}\n` +
       `Due Date: ${format(new Date(invoice.due_date), 'MMM dd, yyyy')}\n\n` +
       `View invoice: ${shareUrl}`;
-    
+
     await Share.share({
       message,
       title: `Invoice ${invoice.invoice_number}`,
     });
   } catch (error) {
     console.error('Error sharing:', error);
+  }
+};
+
+const handleSendViaWhatsApp = async () => {
+  if (!invoice) return;
+
+  try {
+    setShowSendOptionsModal(false);
+
+    // Generate the secure public link
+    const shareUrl = await generatePublicLink();
+
+    if (!shareUrl) {
+      Alert.alert('Error', 'Failed to generate share link');
+      return;
+    }
+
+    const message = `*Invoice #${invoice.invoice_number}*\n\n` +
+      `Client: ${invoice.client?.name}\n` +
+      `Amount: ${formatAmount(invoice.total, invoice.currency)}\n` +
+      `Due Date: ${format(new Date(invoice.due_date), 'MMM dd, yyyy')}\n\n` +
+      `View and pay invoice: ${shareUrl}`;
+
+    const phoneNumber = invoice.client?.phone?.replace(/[^0-9]/g, '') || '';
+    const whatsappUrl = phoneNumber
+      ? `whatsapp://send?phone=${phoneNumber}&text=${encodeURIComponent(message)}`
+      : `whatsapp://send?text=${encodeURIComponent(message)}`;
+
+    const canOpen = await Linking.canOpenURL(whatsappUrl);
+
+    if (canOpen) {
+      await Linking.openURL(whatsappUrl);
+
+      // Update status to sent if it was draft
+      if (invoice.status === 'draft') {
+        await handleStatusChange('sent');
+      }
+    } else {
+      Alert.alert('Error', 'WhatsApp is not installed on this device');
+    }
+  } catch (error) {
+    console.error('Error sending via WhatsApp:', error);
+    Alert.alert('Error', 'Failed to open WhatsApp');
   }
 };
 
@@ -468,17 +519,31 @@ const handleSendEmail = async () => {
               <View style={styles.invoiceHeader}>
                 <Text style={styles.invoiceTitle}>INVOICE</Text>
                 <Text style={styles.invoiceNumber}>#{invoice.invoice_number}</Text>
-                
-                {/* Status Badge */}
-                <View style={[styles.statusBadge, { backgroundColor: getStatusColor(invoice.status) + '20' }]}>
-                  <MaterialIcons 
-                    name={getStatusIcon(invoice.status) as any} 
-                    size={16} 
-                    color={getStatusColor(invoice.status)} 
-                  />
-                  <Text style={[styles.statusText, { color: getStatusColor(invoice.status) }]}>
-                    {isOverdue ? 'OVERDUE' : invoice.status.toUpperCase()}
-                  </Text>
+
+                <View style={styles.badgesRow}>
+                  {/* Status Badge */}
+                  <View style={styles.statusBadge}>
+                    <MaterialIcons
+                      name={getStatusIcon(invoice.status) as any}
+                      size={16}
+                      color={getStatusColor(invoice.status)}
+                    />
+                    <Text style={[styles.statusText, { color: getStatusColor(invoice.status) }]}>
+                      {isOverdue ? 'OVERDUE' : invoice.status.toUpperCase()}
+                    </Text>
+                  </View>
+
+                  {/* Recurring Badge */}
+                  {invoice.is_recurring && (
+                    <View style={styles.recurringBadge}>
+                      <MaterialIcons
+                        name="repeat"
+                        size={16}
+                        color="#8B5CF6"
+                      />
+                      <Text style={styles.recurringText}>RECURRING</Text>
+                    </View>
+                  )}
                 </View>
               </View>
             </View>
@@ -696,23 +761,81 @@ const handleSendEmail = async () => {
 
             <TouchableOpacity
               style={[styles.actionButton, styles.emailButton]}
-              onPress={handleSendEmail}
-              disabled={sendingEmail || !invoice.client?.email}
+              onPress={() => setShowSendOptionsModal(true)}
             >
-              {sendingEmail ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <>
-                  <Feather name="mail" size={18} color="#FFFFFF" />
-                  <Text style={[styles.actionButtonText, { color: '#FFFFFF' }]}>
-                    Send
-                  </Text>
-                </>
-              )}
+              <Feather name="send" size={18} color="#FFFFFF" />
+              <Text style={[styles.actionButtonText, { color: '#FFFFFF' }]}>
+                Send
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
       </ScrollView>
+
+      {/* Send Options Modal */}
+      <Modal
+        visible={showSendOptionsModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowSendOptionsModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowSendOptionsModal(false)}
+        >
+          <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.sendOptionsModal}>
+            <View style={styles.sendOptionsHeader}>
+              <Text style={styles.sendOptionsTitle}>Send Invoice</Text>
+              <TouchableOpacity onPress={() => setShowSendOptionsModal(false)}>
+                <Feather name="x" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.sendOptionsContent}>
+              {/* Email Option */}
+              <TouchableOpacity
+                style={styles.sendOption}
+                onPress={() => {
+                  setShowSendOptionsModal(false);
+                  handleSendEmail();
+                }}
+                disabled={!invoice.client?.email}
+              >
+                <View style={[styles.sendOptionIcon, { backgroundColor: '#EDE9FE' }]}>
+                  <Feather name="mail" size={24} color="#8B5CF6" />
+                </View>
+                <View style={styles.sendOptionContent}>
+                  <Text style={styles.sendOptionTitle}>Send via Email</Text>
+                  <Text style={styles.sendOptionSubtitle}>
+                    {invoice.client?.email || 'No email address available'}
+                  </Text>
+                </View>
+                <Feather name="chevron-right" size={20} color="#9CA3AF" />
+              </TouchableOpacity>
+
+              {/* WhatsApp Option */}
+              <TouchableOpacity
+                style={styles.sendOption}
+                onPress={handleSendViaWhatsApp}
+              >
+                <View style={[styles.sendOptionIcon, { backgroundColor: '#D1FAE5' }]}>
+                  <MaterialIcons name="whatsapp" size={24} color="#10B981" />
+                </View>
+                <View style={styles.sendOptionContent}>
+                  <Text style={styles.sendOptionTitle}>Send via WhatsApp</Text>
+                  <Text style={styles.sendOptionSubtitle}>
+                    {invoice.client?.phone || 'Share invoice link'}
+                  </Text>
+                </View>
+                <Feather name="chevron-right" size={20} color="#9CA3AF" />
+              </TouchableOpacity>
+            </View>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -837,6 +960,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     fontWeight: '500',
   },
+  badgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -844,12 +973,34 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
     gap: 6,
-    alignSelf: 'flex-start',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
   },
   statusText: {
     fontSize: 12,
     fontWeight: '600',
     letterSpacing: 0.5,
+  },
+  recurringBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#8B5CF6',
+  },
+  recurringText: {
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    color: '#8B5CF6',
   },
   overdueText: {
     color: '#EF4444',
@@ -1126,5 +1277,64 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#6B7280',
   },
-  
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  sendOptionsModal: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingBottom: 32,
+  },
+  sendOptionsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  sendOptionsTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  sendOptionsContent: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    gap: 12,
+  },
+  sendOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  sendOptionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  sendOptionContent: {
+    flex: 1,
+  },
+  sendOptionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1F2937',
+    marginBottom: 4,
+  },
+  sendOptionSubtitle: {
+    fontSize: 13,
+    color: '#6B7280',
+  },
 });

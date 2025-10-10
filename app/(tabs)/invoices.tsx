@@ -88,19 +88,39 @@ const InvoiceItem: React.FC<InvoiceItemProps> = ({ item, onPress, formatCurrency
         <View style={styles.invoiceHeader}>
           <View style={styles.invoiceNumberRow}>
             <Text style={styles.invoiceNumber}>{invoiceNumber}</Text>
-            <View style={[styles.statusBadge, { backgroundColor: statusColor + '15' }]}>
-              <MaterialIcons
-                name={getStatusIcon(status) as any}
-                size={12}
-                color={statusColor}
-              />
-              <Text style={[styles.statusText, { color: statusColor }]}>
-                {status.charAt(0).toUpperCase() + status.slice(1)}
-              </Text>
+            <View style={styles.badgeRow}>
+              <View style={[styles.statusBadge, styles.createdBadge]}>
+                <Feather name="calendar" size={10} color="#6B7280" />
+                <Text style={[styles.statusText, styles.createdText]}>
+                  {format(new Date(item.created_at), 'MMM d')}
+                </Text>
+              </View>
+              <View style={[styles.statusBadge, { backgroundColor: statusColor + '15' }]}>
+                <MaterialIcons
+                  name={getStatusIcon(status) as any}
+                  size={12}
+                  color={statusColor}
+                />
+                <Text style={[styles.statusText, { color: statusColor }]}>
+                  {status.charAt(0).toUpperCase() + status.slice(1)}
+                </Text>
+              </View>
+              {item.is_recurring && (
+                <View style={[styles.statusBadge, styles.recurringBadge]}>
+                  <MaterialIcons
+                    name="repeat"
+                    size={12}
+                    color="#8B5CF6"
+                  />
+                  <Text style={[styles.statusText, styles.recurringText]}>
+                    Recurring
+                  </Text>
+                </View>
+              )}
             </View>
           </View>
           <Text style={styles.invoiceAmount}>
-            {isBaseCurrency 
+            {isBaseCurrency
               ? formatCurrency(amount)
               : `${getCurrencySymbol(item.currency || baseCurrency)} ${amount.toFixed(2)}`
             }
@@ -856,6 +876,12 @@ invoiceNumber: {
   color: '#1F2937',
   marginBottom: 6,
 },
+badgeRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 6,
+  flexWrap: 'wrap',
+},
 statusBadge: {
   flexDirection: 'row',
   alignItems: 'center',
@@ -868,6 +894,19 @@ statusBadge: {
 statusText: {
   fontSize: 11,
   fontWeight: '600',
+},
+recurringBadge: {
+  backgroundColor: '#F3E8FF',
+},
+recurringText: {
+  color: '#8B5CF6',
+},
+createdBadge: {
+  backgroundColor: '#F3F4F6',
+},
+createdText: {
+  color: '#6B7280',
+  fontSize: 10,
 },
 invoiceAmount: {
   fontSize: 22,

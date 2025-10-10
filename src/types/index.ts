@@ -115,6 +115,8 @@ export interface Invoice {
   income_category_id?: string;
   base_amount?: number;
   exchange_rate?: number;
+  is_recurring?: boolean;
+  recurring_invoice_id?: string;
   tax_metadata?: {
     has_line_item_vat?: boolean;
     vat_breakdown?: Record<string, { net: number; vat: number; gross: number }>;

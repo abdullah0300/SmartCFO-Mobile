@@ -1,5 +1,6 @@
 // src/hooks/useAuth.tsx
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { Linking } from 'react-native';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../services/supabase';
 import * as SecureStore from 'expo-secure-store';
@@ -11,6 +12,7 @@ interface AuthContextType {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signInWithBiometric: () => Promise<boolean>;
+  signInWithOAuth: (provider: 'google' | 'linkedin_oidc') => Promise<{ success: boolean }>;
   signUp: (email: string, password: string, fullName?: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -117,14 +119,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setUser(data.user);
       setSession(data.session);
-      
+
       // Store refresh token - CHANGED FROM FULL SESSION
       await SecureStore.setItemAsync('refresh_token', data.session.refresh_token);
-      
+
       return true;
     } catch (error) {
       console.error('Biometric sign in error:', error);
       return false;
+    }
+  };
+
+  const signInWithOAuth = async (provider: 'google' | 'linkedin_oidc') => {
+    try {
+      console.log(`🔐 Initiating OAuth for ${provider}...`);
+
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: provider,
+        options: {
+          redirectTo: 'smartcfo://', // Deep link scheme
+          // skipBrowserRedirect is NOT set - let Supabase handle the token exchange
+        },
+      });
+
+      if (error) {
+        console.error('❌ OAuth error:', error);
+        throw error;
+      }
+
+      // Open the OAuth URL in the system browser
+      if (data?.url) {
+        console.log('📱 Opening OAuth URL in browser...');
+        const supported = await Linking.canOpenURL(data.url);
+
+        if (supported) {
+          await Linking.openURL(data.url);
+          console.log('✅ Browser opened successfully');
+          return { success: true };
+        } else {
+          throw new Error('Cannot open OAuth URL - browser not supported');
+        }
+      } else {
+        throw new Error('No OAuth URL returned from Supabase');
+      }
+    } catch (error) {
+      console.error('❌ OAuth sign in error:', error);
+      throw error;
     }
   };
 
@@ -169,6 +209,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading,
         signIn,
         signInWithBiometric,
+        signInWithOAuth,
         signUp,
         signOut,
       }}

@@ -2,6 +2,7 @@
   "expo": {
     "name": "SmartCFO",
     "slug": "smart-cfo",
+    "scheme": "smartcfo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,9 +15,11 @@
     },
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.abdullah724.SmartCFOMobile",
       "infoPlist": {
         "NSFaceIDUsageDescription": "SmartCFO uses Biometric for secure and quick access to your financial data."
-      }
+      },
+      "associatedDomains": ["applinks:adsbnzqorfmgnneiopcr.supabase.co"]
     },
     "android": {
       "adaptiveIcon": {
@@ -25,7 +28,19 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.abdullah724.SmartCFOMobile",
-      "permissions": ["USE_BIOMETRIC", "USE_FINGERPRINT"]
+      "permissions": ["USE_BIOMETRIC", "USE_FINGERPRINT"],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "smartcfo"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"

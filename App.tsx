@@ -1,6 +1,6 @@
 // App.tsx
 import React, { useState, useEffect } from 'react';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Linking } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -44,6 +44,7 @@ import { SettingsProvider } from './src/contexts/SettingsContext';
 import { TabBar } from './src/components/navigation/TabBar';
 import { FloatingActionBar } from './src/components/common/FloatingActionBar';
 import { Colors } from './src/constants/Colors';
+import { supabase } from './src/services/supabase';
 import InvoiceSettingsScreen from './src/screens/InvoiceSettingsScreen';
 import RecurringInvoiceEditScreen from './src/screens/RecurringInvoiceEditScreen';
 import ClientDetailScreen from './src/screens/ClientDetailScreen';
@@ -121,6 +122,87 @@ function TabNavigator() {
 
 function AuthNavigator() {
   const { user, loading } = useAuth();
+
+  // Handle OAuth deep link redirects
+  useEffect(() => {
+    const handleUrl = async (event: { url: string }) => {
+      const url = event.url;
+      console.log('🔗 Deep link received:', url);
+
+      // Check if this is an OAuth callback
+      if (url.includes('#') || url.includes('access_token') || url.includes('error')) {
+        console.log('📱 OAuth callback detected, processing session...');
+
+        try {
+          // Extract the URL hash/fragment
+          const hashIndex = url.indexOf('#');
+
+          if (hashIndex !== -1) {
+            const fragment = url.substring(hashIndex + 1);
+            console.log('📄 URL fragment:', fragment);
+
+            // Parse the fragment into key-value pairs
+            const params = new URLSearchParams(fragment);
+            const accessToken = params.get('access_token');
+            const refreshToken = params.get('refresh_token');
+            const errorCode = params.get('error');
+            const errorDescription = params.get('error_description');
+
+            // Check for errors first
+            if (errorCode) {
+              console.error('❌ OAuth error:', errorCode, errorDescription);
+              // You could show an alert here
+              return;
+            }
+
+            if (accessToken && refreshToken) {
+              console.log('✅ Tokens extracted from URL');
+              console.log('🔑 Access token length:', accessToken.length);
+              console.log('🔑 Refresh token length:', refreshToken.length);
+
+              // Set the session using Supabase
+              const { data, error } = await supabase.auth.setSession({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+              });
+
+              if (error) {
+                console.error('❌ Error setting session:', error.message);
+              } else {
+                console.log('✅ OAuth session established successfully!');
+                console.log('👤 User email:', data.user?.email);
+                console.log('👤 User ID:', data.user?.id);
+              }
+            } else {
+              console.warn('⚠️ No access/refresh tokens found in URL');
+              console.log('Available params:', Array.from(params.keys()).join(', '));
+            }
+          } else {
+            console.warn('⚠️ No hash fragment in URL');
+          }
+        } catch (error: any) {
+          console.error('❌ Error processing OAuth callback:', error.message);
+        }
+      } else {
+        console.log('ℹ️ Deep link is not an OAuth callback');
+      }
+    };
+
+    // Listen for deep link events
+    const subscription = Linking.addEventListener('url', handleUrl);
+
+    // Check if app was opened with a URL
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        console.log('🚀 App opened with initial URL');
+        handleUrl({ url });
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 
   if (loading) {
     return (

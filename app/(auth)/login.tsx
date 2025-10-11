@@ -21,7 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Feather, MaterialIcons, Ionicons } from '@expo/vector-icons';
+import { Feather, MaterialIcons, Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as SecureStore from 'expo-secure-store';
 import { useAuth } from '../../src/hooks/useAuth';
@@ -41,7 +41,7 @@ type RootStackParamList = {
 type LoginScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Login'>;
 
 export default function LoginScreen() {
-  const { signIn, signInWithBiometric } = useAuth();
+  const { signIn, signInWithBiometric, signInWithOAuth } = useAuth();
   const { 
     isAvailable, 
     isEnabled, 
@@ -59,6 +59,7 @@ export default function LoginScreen() {
   const [rememberMe, setRememberMe] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [storedEmail, setStoredEmail] = useState('');
+  const [socialLoading, setSocialLoading] = useState<string | null>(null);
   // Check for biometric login on mount
   useEffect(() => {
     if (!biometricLoading && isEnabled) {
@@ -124,7 +125,7 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       await signIn(email, password);
-      
+
       // If user wants to enable biometric
       if (enableBiometricOnLogin && isAvailable) {
         const success = await enableBiometric(email, password);
@@ -135,11 +136,34 @@ export default function LoginScreen() {
     } catch (error: any) {
       console.error('Login error:', error);
       Alert.alert(
-        'Login Failed', 
+        'Login Failed',
         error.message || 'Please check your credentials and try again'
       );
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSocialAuth = async (provider: 'google' | 'linkedin_oidc') => {
+    setSocialLoading(provider);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    try {
+      console.log(`🔐 Starting OAuth flow for ${provider}`);
+      const result = await signInWithOAuth(provider);
+      console.log('✅ OAuth initiated successfully:', result);
+
+      // Clear loading state after browser opens (give it a moment)
+      setTimeout(() => {
+        setSocialLoading(null);
+      }, 1500);
+    } catch (error: any) {
+      console.error('❌ OAuth error:', error);
+      Alert.alert(
+        'Authentication Failed',
+        error.message || 'Could not complete authentication. Please try again.'
+      );
+      setSocialLoading(null);
     }
   };
 
@@ -153,13 +177,17 @@ export default function LoginScreen() {
   const handleForgotPassword = () => {
     Alert.alert(
       'Reset Password',
-      'Password reset is available on the web app. Would you like to open it?',
+      'You will be redirected to the web app to reset your password.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Open Web App', 
-          onPress: () => Linking.openURL('https://smartcfo.webcraftio.com/login')
-        }
+        {
+          text: 'Continue',
+          onPress: () => {
+            Linking.openURL('https://smartcfo.webcraftio.com/login').catch(err =>
+              Alert.alert('Error', 'Could not open the link')
+            );
+          },
+        },
       ]
     );
   };
@@ -221,6 +249,50 @@ export default function LoginScreen() {
 
             {/* Login Card */}
             <View style={styles.loginCard}>
+              {/* Social Login Section */}
+              <View style={styles.socialLoginContainer}>
+                <Text style={styles.socialLoginTitle}>Sign in with</Text>
+
+                {/* Google Login Button */}
+                <TouchableOpacity
+                  style={[styles.socialButton, socialLoading === 'google' && styles.socialButtonDisabled]}
+                  onPress={() => handleSocialAuth('google')}
+                  disabled={socialLoading !== null}
+                >
+                  {socialLoading === 'google' ? (
+                    <ActivityIndicator color="#6366F1" size="small" />
+                  ) : (
+                    <>
+                      <FontAwesome5 name="google" size={22} color="#DB4437" />
+                      <Text style={styles.socialButtonText}>Continue with Google</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                {/* LinkedIn Login Button */}
+                <TouchableOpacity
+                  style={[styles.socialButton, socialLoading === 'linkedin_oidc' && styles.socialButtonDisabled]}
+                  onPress={() => handleSocialAuth('linkedin_oidc')}
+                  disabled={socialLoading !== null}
+                >
+                  {socialLoading === 'linkedin_oidc' ? (
+                    <ActivityIndicator color="#6366F1" size="small" />
+                  ) : (
+                    <>
+                      <FontAwesome5 name="linkedin" size={22} color="#0077B5" />
+                      <Text style={styles.socialButtonText}>Continue with LinkedIn</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                {/* Divider */}
+                <View style={styles.socialDividerContainer}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.socialDividerText}>OR</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+              </View>
+
               {/* Biometric Login Button - Show if enabled */}
               {isEnabled && (
                 <>
@@ -301,7 +373,13 @@ export default function LoginScreen() {
                 {errors.password && <Text style={styles.errorText}>{errors.password}</Text>}
               </View>
 
-              
+              {/* Forgot Password Link */}
+              <TouchableOpacity
+                onPress={handleForgotPassword}
+                style={styles.forgotPasswordButton}
+              >
+                <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+              </TouchableOpacity>
 
               {/* Biometric Enable Option */}
               {isAvailable && !isEnabled && (
@@ -476,11 +554,76 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.8)',
   },
   biometricAccountText: {
-  textAlign: 'center',
-  color: '#64748B',
-  fontSize: 14,
-  marginBottom: 12,
-},
+    textAlign: 'center',
+    color: '#64748B',
+    fontSize: 14,
+    marginBottom: 12,
+  },
+  socialLoginContainer: {
+    marginBottom: Spacing.lg,
+  },
+  socialLoginTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748B',
+    textAlign: 'center',
+    marginBottom: Spacing.md,
+    letterSpacing: 0.5,
+  },
+  socialButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.sm,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  socialButtonDisabled: {
+    opacity: 0.6,
+  },
+  socialButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#334155',
+    marginLeft: Spacing.sm,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E2E8F0',
+  },
+  socialDividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: Spacing.sm,
+    marginBottom: 0,
+  },
+  socialDividerText: {
+    marginHorizontal: Spacing.md,
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 1,
+  },
+  forgotPasswordButton: {
+    alignSelf: 'center',
+    // marginTop: Spacing.sm,
+    padding: Spacing.sm,
+  },
+  forgotPasswordText: {
+    fontSize: 14,
+    color: Colors.light.primary,
+    fontWeight: '600',
+  },
   loginCard: {
     backgroundColor: 'rgba(255,255,255,0.95)',
     borderRadius: 24,

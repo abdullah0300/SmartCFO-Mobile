@@ -3,7 +3,78 @@ import 'react-native-url-polyfill/auto';
 import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
-// import * as Crypto from 'expo-crypto';
+import * as Crypto from 'expo-crypto';
+
+// Helper functions for crypto polyfill
+function arrayBufferToString(buffer: ArrayBuffer): string {
+  const uint8Array = new Uint8Array(buffer);
+  let binaryString = '';
+  for (let i = 0; i < uint8Array.length; i++) {
+    binaryString += String.fromCharCode(uint8Array[i]);
+  }
+  return binaryString;
+}
+
+function hexStringToArrayBuffer(hexString: string): ArrayBuffer {
+  // Remove any spaces and convert hex string to ArrayBuffer
+  const cleanHex = hexString.replace(/\s/g, '');
+  const buffer = new ArrayBuffer(cleanHex.length / 2);
+  const uint8Array = new Uint8Array(buffer);
+
+  for (let i = 0; i < cleanHex.length; i += 2) {
+    uint8Array[i / 2] = parseInt(cleanHex.substr(i, 2), 16);
+  }
+
+  return buffer;
+}
+
+// Polyfill for crypto.getRandomValues
+if (!global.crypto) {
+  global.crypto = {} as any;
+}
+
+if (!global.crypto.getRandomValues) {
+  global.crypto.getRandomValues = function <T extends ArrayBufferView>(array: T): T {
+    // expo-crypto's getRandomBytes returns a Uint8Array
+    const randomBytes = Crypto.getRandomBytes(array.byteLength);
+
+    // Copy the random bytes into the provided array
+    const uint8Array = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+    uint8Array.set(randomBytes);
+
+    return array;
+  };
+}
+
+// Polyfill for crypto.subtle (for PKCE)
+if (!global.crypto.subtle) {
+  global.crypto.subtle = {
+    digest: async (algorithm: string | { name: string }, data: BufferSource): Promise<ArrayBuffer> => {
+      // Convert BufferSource to string for expo-crypto
+      let inputString: string;
+
+      if (typeof data === 'string') {
+        inputString = data;
+      } else if (data instanceof ArrayBuffer) {
+        inputString = arrayBufferToString(data);
+      } else if (ArrayBuffer.isView(data)) {
+        const buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+        inputString = arrayBufferToString(buffer);
+      } else {
+        throw new Error('Unsupported data type for digest');
+      }
+
+      // Get the hash as hex string from expo-crypto
+      const hashHex = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        inputString
+      );
+
+      // Convert hex string to ArrayBuffer
+      return hexStringToArrayBuffer(hashHex);
+    },
+  } as any;
+}
 
 // Your Supabase credentials
 const supabaseUrl = 'https://adsbnzqorfmgnneiopcr.supabase.co';
@@ -111,6 +182,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     storage: ChunkedSecureStoreAdapter,
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: false,
+    detectSessionInUrl: false,  // Disabled - we handle OAuth callbacks manually in App.tsx
+    flowType: 'pkce',
   },
 });

@@ -803,3 +803,190 @@ export const getExpense = async (expenseId: string, userId: string) => {
   if (error) throw error;
   return data;
 };
+
+// ============================================
+// LOAN MANAGEMENT FUNCTIONS
+// ============================================
+
+// Generate unique loan number
+export const generateLoanNumber = async (userId: string): Promise<string> => {
+  try {
+    const { count, error } = await supabase
+      .from('loans')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    if (error) throw error;
+    const nextNumber = (count || 0) + 1;
+    return `LOAN-${String(nextNumber).padStart(4, '0')}`;
+  } catch (error) {
+    console.error('Error generating loan number:', error);
+    return `LOAN-${Date.now()}`;
+  }
+};
+
+// Get all loans for a user (excluding soft-deleted)
+export const getLoans = async (userId: string) => {
+  const { data, error } = await supabase
+    .from('loans')
+    .select(`
+      *,
+      vendor:vendors(id, name)
+    `)
+    .eq('user_id', userId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return data || [];
+};
+
+// Get single loan with details (excluding soft-deleted)
+export const getLoan = async (loanId: string, userId: string) => {
+  const { data, error } = await supabase
+    .from('loans')
+    .select(`
+      *,
+      vendor:vendors(*)
+    `)
+    .eq('id', loanId)
+    .eq('user_id', userId)
+    .is('deleted_at', null)
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
+// Create a new loan
+export const createLoan = async (loan: any, userId: string) => {
+  const { data, error } = await supabase
+    .from('loans')
+    .insert([{
+      ...loan,
+      user_id: userId,
+    }])
+    .select(`
+      *,
+      vendor:vendors(*)
+    `)
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
+// Update loan
+export const updateLoan = async (loanId: string, updates: any, userId: string) => {
+  const { data, error } = await supabase
+    .from('loans')
+    .update(updates)
+    .eq('id', loanId)
+    .eq('user_id', userId)
+    .select(`
+      *,
+      vendor:vendors(*)
+    `)
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
+// Delete loan (soft delete - sets deleted_at)
+export const deleteLoan = async (loanId: string, userId: string) => {
+  const { error } = await supabase
+    .from('loans')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', loanId)
+    .eq('user_id', userId);
+
+  if (error) throw error;
+};
+
+// Get loan payments
+export const getLoanPayments = async (loanId: string, userId: string) => {
+  const { data, error } = await supabase
+    .from('loan_payments')
+    .select('*')
+    .eq('loan_id', loanId)
+    .eq('user_id', userId)
+    .order('payment_date', { ascending: false });
+
+  if (error) throw error;
+  return data || [];
+};
+
+// Record a loan payment
+export const recordLoanPayment = async (payment: any, userId: string) => {
+  const { data, error } = await supabase
+    .from('loan_payments')
+    .insert([{
+      ...payment,
+      user_id: userId,
+    }])
+    .select()
+    .single();
+
+  if (error) throw error;
+
+  // Update loan's current balance
+  if (data && payment.loan_id) {
+    const { data: loan } = await supabase
+      .from('loans')
+      .select('current_balance')
+      .eq('id', payment.loan_id)
+      .single();
+
+    if (loan) {
+      const newBalance = (loan.current_balance || 0) - (payment.principal_amount || 0);
+      await supabase
+        .from('loans')
+        .update({
+          current_balance: Math.max(0, newBalance),
+          status: newBalance <= 0 ? 'paid_off' : 'active'
+        })
+        .eq('id', payment.loan_id);
+    }
+  }
+
+  return data;
+};
+
+// Get loan amortization schedule
+export const getLoanSchedule = async (loanId: string, userId: string) => {
+  const { data, error } = await supabase
+    .from('loan_schedules')
+    .select('*')
+    .eq('loan_id', loanId)
+    .eq('user_id', userId)
+    .order('payment_number', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+};
+
+// Save amortization schedule
+export const saveLoanSchedule = async (loanId: string, schedule: any[], userId: string) => {
+  // Delete existing schedule
+  await supabase
+    .from('loan_schedules')
+    .delete()
+    .eq('loan_id', loanId)
+    .eq('user_id', userId);
+
+  // Insert new schedule
+  const scheduleData = schedule.map(payment => ({
+    ...payment,
+    loan_id: loanId,
+    user_id: userId,
+  }));
+
+  const { data, error } = await supabase
+    .from('loan_schedules')
+    .insert(scheduleData)
+    .select();
+
+  if (error) throw error;
+  return data;
+};

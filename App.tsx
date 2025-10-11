@@ -33,6 +33,11 @@ import ClientsScreen from './src/screens/ClientsScreen';
 import CategoriesScreen from './src/screens/CategoriesScreen';
 import VendorsScreen from './src/screens/VendorsScreen';
 
+// Loan Screens
+import LoansScreen from './src/screens/LoansScreen';
+import LoanDetailScreen from './src/screens/LoanDetailScreen';
+import CreateLoanScreen from './src/screens/CreateLoanScreen';
+
 // Components & Hooks
 import { AuthProvider, useAuth } from './src/hooks/useAuth';
 import { SettingsProvider } from './src/contexts/SettingsContext';
@@ -53,7 +58,7 @@ export type RootStackParamList = {
   Main: undefined;
   Login: undefined;
   InvoiceView: { invoiceId: string };
-  CreateInvoice: { 
+  CreateInvoice: {
     invoiceId?: string;
     recurringId?: string;
     templateData?: any;
@@ -70,6 +75,9 @@ export type RootStackParamList = {
   TransactionDetail: { transactionId: string; type: 'income' | 'expense' };
   EditTransaction: { transactionId: string; type: 'income' | 'expense' };
   InvoiceSettings: undefined;
+  Loans: undefined;
+  LoanDetail: { loanId: string };
+  CreateLoan: { loanId?: string } | undefined;
 };
 
 export type TabParamList = {
@@ -196,16 +204,43 @@ function AuthNavigator() {
               presentation: 'card' 
             }}
           />
-          <Stack.Screen 
-            name="Vendors" 
+          <Stack.Screen
+            name="Vendors"
             component={VendorsScreen || PlaceholderScreen}
-            options={{ 
+            options={{
               animation: 'slide_from_right',
-              presentation: 'card' 
+              presentation: 'card'
             }}
           />
-          <Stack.Screen 
-            name="TransactionDetail" 
+          <Stack.Screen
+            name="Loans"
+            component={LoansScreen}
+            options={{
+              animation: 'slide_from_right',
+              presentation: 'card',
+              headerShown: false
+            }}
+          />
+          <Stack.Screen
+            name="LoanDetail"
+            component={LoanDetailScreen}
+            options={{
+              animation: 'slide_from_right',
+              presentation: 'card',
+              headerShown: false
+            }}
+          />
+          <Stack.Screen
+            name="CreateLoan"
+            component={CreateLoanScreen}
+            options={{
+              animation: 'slide_from_bottom',
+              presentation: 'modal',
+              headerShown: false
+            }}
+          />
+          <Stack.Screen
+            name="TransactionDetail"
             component={TransactionDetailScreen}
             options={{ 
               animation: 'slide_from_right',

@@ -29,6 +29,7 @@ import * as Haptics from 'expo-haptics';
 import { useAuth } from '../hooks/useAuth';
 import { useSettings } from '../contexts/SettingsContext';
 import { supabase } from '../services/supabase';
+import { getLoans } from '../services/api';
 import { Spacing, BorderRadius } from '../constants/Colors';
 import type { Settings } from '../types';
 
@@ -82,6 +83,17 @@ interface VendorSpending {
   expenseCount: number;
 }
 
+interface LoanSummary {
+  id: string;
+  loan_number: string;
+  lender_name: string;
+  principal_amount: number;
+  current_balance: number;
+  monthly_payment: number;
+  interest_rate: number;
+  status: string;
+}
+
 export default function ReportsOverviewScreen() {
   const navigation = useNavigation();
   const { user } = useAuth();
@@ -132,6 +144,7 @@ export default function ReportsOverviewScreen() {
 
   const [clientMetrics, setClientMetrics] = useState<ClientMetrics[]>([]);
   const [topVendors, setTopVendors] = useState<VendorSpending[]>([]);
+  const [loans, setLoans] = useState<LoanSummary[]>([]);
 
   const periods = [
     { id: '1month', label: '1M' },
@@ -219,6 +232,10 @@ export default function ReportsOverviewScreen() {
       setCategoryData(data.categoryData);
       setClientMetrics(data.clientMetrics || []);
       setTopVendors(data.topVendors || []);
+
+      // Fetch loans data separately
+      const loansData = await getLoans(user.id);
+      setLoans(loansData || []);
 
     } catch (err: any) {
       console.error('Error loading report data:', err);
@@ -733,27 +750,6 @@ export default function ReportsOverviewScreen() {
           </View>
         )}
 
-        {/* Tax/VAT Analysis */}
-        <View style={styles.taxSection}>
-          <Text style={styles.sectionTitle}>
-            {userSettings?.country === 'GB' ? 'VAT Analysis' : 'Tax Analysis'}
-          </Text>
-
-          <FlatList
-            ref={taxListRef}
-            data={taxCards}
-            renderItem={renderTaxCard}
-            keyExtractor={(item) => item.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.taxCarousel}
-            snapToInterval={TAX_CARD_WIDTH + 10}
-            decelerationRate="fast"
-            onViewableItemsChanged={onTaxViewableItemsChanged}
-            viewabilityConfig={viewabilityConfig}
-          />
-        </View>
-
         {/* Top Vendors */}
         {topVendors.length > 0 && (
           <View style={styles.section}>
@@ -792,6 +788,114 @@ export default function ReportsOverviewScreen() {
                     </View>
                     <Text style={styles.vendorAmount}>{formatCurrency(vendor.totalSpent)}</Text>
                   </LinearGradient>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
+        {/* Tax/VAT Analysis */}
+        <View style={styles.taxSection}>
+          <Text style={styles.sectionTitle}>
+            {userSettings?.country === 'GB' ? 'VAT Analysis' : 'Tax Analysis'}
+          </Text>
+
+          <FlatList
+            ref={taxListRef}
+            data={taxCards}
+            renderItem={renderTaxCard}
+            keyExtractor={(item) => item.id}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.taxCarousel}
+            snapToInterval={TAX_CARD_WIDTH + 10}
+            decelerationRate="fast"
+            onViewableItemsChanged={onTaxViewableItemsChanged}
+            viewabilityConfig={viewabilityConfig}
+          />
+        </View>
+
+        {/* Loans Overview */}
+        {loans.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Loans Overview</Text>
+              <TouchableOpacity onPress={() => navigation.navigate('Loans' as never)}>
+                <Text style={styles.viewAll}>View all →</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.loansList}>
+              {/* Summary Card */}
+              <LinearGradient
+                colors={['#DC2626', '#EF4444']}
+                style={styles.loansSummaryCard}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+              >
+                <View style={styles.loansSummaryRow}>
+                  <View style={styles.loansSummaryItem}>
+                    <Text style={styles.loansSummaryLabel}>Total Debt</Text>
+                    <Text style={styles.loansSummaryValue}>
+                      {formatCurrency(loans.reduce((sum, loan) => sum + loan.current_balance, 0))}
+                    </Text>
+                  </View>
+                  <View style={styles.loansSummaryDivider} />
+                  <View style={styles.loansSummaryItem}>
+                    <Text style={styles.loansSummaryLabel}>Monthly Payment</Text>
+                    <Text style={styles.loansSummaryValue}>
+                      {formatCurrency(
+                        loans
+                          .filter((l) => l.status === 'active')
+                          .reduce((sum, loan) => sum + loan.monthly_payment, 0)
+                      )}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.loansCount}>
+                  <MaterialIcons name="account-balance" size={16} color="rgba(255,255,255,0.9)" />
+                  <Text style={styles.loansCountText}>
+                    {loans.length} loan{loans.length !== 1 ? 's' : ''} • {loans.filter(l => l.status === 'active').length} active
+                  </Text>
+                </View>
+              </LinearGradient>
+
+              {/* Individual Loans */}
+              {loans.slice(0, 3).map((loan) => {
+                const progress = ((loan.principal_amount - loan.current_balance) / loan.principal_amount) * 100;
+                return (
+                  <TouchableOpacity
+                    key={loan.id}
+                    style={styles.loanCard}
+                    onPress={() => navigation.navigate('LoanDetail' as never, { loanId: loan.id } as never)}
+                  >
+                    <View style={styles.loanCardHeader}>
+                      <View style={styles.loanCardLeft}>
+                        <View style={styles.loanIconBadge}>
+                          <MaterialIcons name="account-balance" size={16} color="#DC2626" />
+                        </View>
+                        <View>
+                          <Text style={styles.loanCardNumber}>{loan.loan_number}</Text>
+                          <Text style={styles.loanCardLender}>{loan.lender_name}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.loanCardRight}>
+                        <Text style={styles.loanCardBalance}>{formatCurrency(loan.current_balance)}</Text>
+                        <Text style={styles.loanCardLabel}>Amount Left</Text>
+                      </View>
+                    </View>
+                    <View style={styles.loanProgressBar}>
+                      <View style={styles.loanProgressTrack}>
+                        <LinearGradient
+                          colors={['#DC2626', '#F59E0B', '#10B981']}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 0 }}
+                          style={[styles.loanProgressFill, { width: `${progress}%` }]}
+                        />
+                      </View>
+                      <Text style={styles.loanProgressText}>{progress.toFixed(0)}% paid</Text>
+                    </View>
+                  </TouchableOpacity>
                 );
               })}
             </View>
@@ -1355,5 +1459,118 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
     letterSpacing: 0.3,
+  },
+  // Loans Widget Styles
+  loansList: {
+    gap: Spacing.sm,
+  },
+  loansSummaryCard: {
+    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    marginBottom: Spacing.sm,
+  },
+  loansSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  loansSummaryItem: {
+    flex: 1,
+  },
+  loansSummaryDivider: {
+    width: 1,
+    height: 40,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    marginHorizontal: 12,
+  },
+  loansSummaryLabel: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  loansSummaryValue: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  loansCount: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  loansCountText: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontWeight: '500',
+  },
+  loanCard: {
+    backgroundColor: '#FFFFFF',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+  },
+  loanCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  loanCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  loanIconBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loanCardNumber: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  loanCardLender: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  loanCardRight: {
+    alignItems: 'flex-end',
+  },
+  loanCardBalance: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  loanCardLabel: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  loanProgressBar: {
+    gap: 6,
+  },
+  loanProgressTrack: {
+    height: 6,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  loanProgressFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  loanProgressText: {
+    fontSize: 11,
+    color: '#6B7280',
+    fontWeight: '500',
   },
 });

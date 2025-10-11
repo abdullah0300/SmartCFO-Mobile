@@ -24,11 +24,12 @@ export const FloatingActionBar: React.FC = () => {
 
   const actions = [
     { icon: 'people', screen: 'Clients', color: '#3B82F6', label: 'Clients' },
-    { icon: 'account-balance-wallet', screen: 'Budget', color: '#8B5CF6', label: 'Budget' },
-    { icon: 'bar-chart', screen: 'ReportsOverview', color: '#F59E0B', label: 'Reports' },
+    { icon: 'store', screen: 'Vendors', color: '#EF4444', label: 'Vendors' },
     { icon: 'label', screen: 'Categories', color: '#6366F1', label: 'Categories' },
     { icon: 'refresh', screen: 'RecurringInvoices', color: '#10B981', label: 'Recurring' },
-    { icon: 'store', screen: 'Vendors', color: '#EF4444', label: 'Vendors' },
+    { icon: 'account-balance-wallet', screen: 'Budget', color: '#8B5CF6', label: 'Budget' },
+    { icon: 'account-balance', screen: 'Loans', color: '#DC2626', label: 'Loans' },
+    { icon: 'bar-chart', screen: 'ReportsOverview', color: '#F59E0B', label: 'Reports' },
   ];
 
   const toggleExpand = () => {

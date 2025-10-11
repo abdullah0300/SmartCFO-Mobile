@@ -73,7 +73,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   onPaymentRecorded,
 }) => {
   const { user } = useAuth();
-  const { formatCurrency } = useSettings();
+  const { formatCurrency, baseCurrency } = useSettings();
 
   // Calculate payment number
   const paymentNumber = existingPayments.length + 1;
@@ -296,6 +296,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           user_id: user.id,
           category_id: category.id,
           amount: interestAmount,
+          currency: baseCurrency, // Use user's base currency
           date: format(paymentDate, 'yyyy-MM-dd'),
           description: `Interest payment for ${loan.loan_number} - ${loan.lender_name} (Payment #${paymentNumber})`,
         };

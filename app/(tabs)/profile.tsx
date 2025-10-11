@@ -18,7 +18,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 
@@ -26,6 +26,7 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { useBiometric } from '../../src/hooks/useBiometric';
 import { getProfile, updateProfile } from '../../src/services/api';
 import { Colors, Spacing, Typography, BorderRadius } from '../../src/constants/Colors';
+import { supabase } from '../../src/services/supabase';
 
 interface ProfileData {
   id?: string;
@@ -34,6 +35,7 @@ interface ProfileData {
   company_name?: string;
   company_address?: string;
   company_logo?: string;
+  privacy_preference?: 'show' | 'hide' | null;
 }
 
 interface FormData {
@@ -45,16 +47,18 @@ interface FormData {
 
 export default function ProfileScreen() {
   const { user, signOut } = useAuth();
-  const { 
-    isAvailable: biometricAvailable, 
-    isEnabled: biometricEnabled, 
+  const queryClient = useQueryClient();
+  const {
+    isAvailable: biometricAvailable,
+    isEnabled: biometricEnabled,
     biometricType,
     disableBiometric,
     refreshStatus: refreshBiometricStatus
   } = useBiometric();
-  
+
   const navigation = useNavigation();
   const [isEditing, setIsEditing] = useState(false);
+  const [privacyPreference, setPrivacyPreference] = useState<'show' | 'hide'>('show');
   const [formData, setFormData] = useState<FormData>({
     full_name: '',
     phone: '',
@@ -77,6 +81,10 @@ export default function ProfileScreen() {
         company_name: profile.company_name || '',
         company_address: profile.company_address || '',
       });
+      // Load privacy preference
+      if (profile.privacy_preference === 'show' || profile.privacy_preference === 'hide') {
+        setPrivacyPreference(profile.privacy_preference);
+      }
     }
   }, [profile]);
 
@@ -121,8 +129,8 @@ export default function ProfileScreen() {
         `Are you sure you want to disable ${biometricType} login?`,
         [
           { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Disable', 
+          {
+            text: 'Disable',
             style: 'destructive',
             onPress: async () => {
               await disableBiometric();
@@ -138,12 +146,38 @@ export default function ProfileScreen() {
         `To enable ${biometricType} login, please sign out and sign in again. You'll see the option to enable ${biometricType} during login.`,
         [
           { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Sign Out Now', 
+          {
+            text: 'Sign Out Now',
             onPress: handleSignOut
           }
         ]
       );
+    }
+  };
+
+  const handlePrivacyToggle = async (value: boolean) => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      const newPreference = value ? 'show' : 'hide';
+      setPrivacyPreference(newPreference);
+
+      // Update in Supabase
+      const { error } = await supabase
+        .from('profiles')
+        .update({ privacy_preference: newPreference })
+        .eq('id', user!.id);
+
+      if (error) throw error;
+
+      // Invalidate all profile queries to update dashboard and other screens
+      queryClient.invalidateQueries({ queryKey: ['profile', user?.id] });
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      console.error('Error updating privacy preference:', error);
+      Alert.alert('Error', 'Failed to update privacy preference');
+      // Revert the toggle
+      setPrivacyPreference(value ? 'hide' : 'show');
     }
   };
 
@@ -325,17 +359,17 @@ export default function ProfileScreen() {
 
             {/* Biometric Setting */}
             {biometricAvailable && (
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.securityOption}
                 onPress={handleBiometricToggle}
                 activeOpacity={0.7}
               >
                 <View style={styles.securityOptionLeft}>
                   <View style={styles.fieldIcon}>
-                    <MaterialIcons 
-                      name={biometricType === 'Biometric' ? 'face' : 'fingerprint'} 
-                      size={20} 
-                      color={Colors.light.textSecondary} 
+                    <MaterialIcons
+                      name={biometricType === 'Biometric' ? 'face' : 'fingerprint'}
+                      size={20}
+                      color={Colors.light.textSecondary}
                     />
                   </View>
                   <View style={styles.securityOptionContent}>
@@ -343,8 +377,8 @@ export default function ProfileScreen() {
                       {biometricType} Login
                     </Text>
                     <Text style={styles.securityOptionSubtitle}>
-                      {biometricEnabled 
-                        ? `Quick login with ${biometricType}` 
+                      {biometricEnabled
+                        ? `Quick login with ${biometricType}`
                         : `Enable ${biometricType} for quick access`}
                     </Text>
                   </View>
@@ -359,7 +393,36 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             )}
 
-         
+            {/* Privacy Preference Setting */}
+            <View style={styles.securityOption}>
+              <View style={styles.securityOptionLeft}>
+                <View style={styles.fieldIcon}>
+                  <Feather
+                    name={privacyPreference === 'show' ? 'eye' : 'eye-off'}
+                    size={20}
+                    color={Colors.light.textSecondary}
+                  />
+                </View>
+                <View style={styles.securityOptionContent}>
+                  <Text style={styles.securityOptionTitle}>
+                    Show Amounts by Default
+                  </Text>
+                  <Text style={styles.securityOptionSubtitle}>
+                    {privacyPreference === 'show'
+                      ? 'Financial data always visible'
+                      : 'Amounts hidden for privacy'}
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={privacyPreference === 'show'}
+                onValueChange={handlePrivacyToggle}
+                trackColor={{ false: '#E5E7EB', true: Colors.light.primary }}
+                thumbColor="#FFFFFF"
+                ios_backgroundColor="#E5E7EB"
+              />
+            </View>
+
           </View>
 
           {/* Action Buttons */}

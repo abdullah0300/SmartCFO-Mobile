@@ -33,6 +33,7 @@ import { AIInsightsModal } from '../../src/components/dashboard/AIInsightsModal'
 import { CompositeNavigationProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { DateFilterBar } from '../../src/components/common/DateFilterBar';
+import { supabase } from '../../src/services/supabase';
 const { width } = Dimensions.get('window');
 
 // Navigation types
@@ -85,31 +86,33 @@ const DynamicGreeting = ({ userName }: { userName: string }) => {
 
 
 
-const RecentTransaction = ({ 
-  item, 
+const RecentTransaction = ({
+  item,
   type,
-  navigation
-}: { 
-  item: any; 
+  navigation,
+  showAmounts
+}: {
+  item: any;
   type: 'income' | 'expense';
   navigation: any;
+  showAmounts: boolean;
 }) => {
   const { formatCurrency, getCurrencySymbol, baseCurrency } = useSettings();
   const isIncome = type === 'income';
   // Show amount WITHOUT tax (like list pages)
   const displayAmount = item.amount;
   const isBaseCurrency = !item.currency || item.currency === baseCurrency;
-  
+
   const handlePress = () => {
-    navigation.navigate('TransactionDetail', { 
-      transactionId: item.id, 
-      type: type 
+    navigation.navigate('TransactionDetail', {
+      transactionId: item.id,
+      type: type
     });
   };
 
   return (
-    <TouchableOpacity 
-      style={styles.transactionItem} 
+    <TouchableOpacity
+      style={styles.transactionItem}
       activeOpacity={0.7}
       onPress={handlePress}
     >
@@ -118,10 +121,10 @@ const RecentTransaction = ({
           styles.transactionIcon,
           { backgroundColor: isIncome ? '#E8F5E9' : '#FFEBEE' }
         ]}>
-          <Feather 
-            name={isIncome ? 'trending-up' : 'trending-down'} 
-            size={18} 
-            color={isIncome ? Colors.light.success : Colors.light.error} 
+          <Feather
+            name={isIncome ? 'trending-up' : 'trending-down'}
+            size={18}
+            color={isIncome ? Colors.light.success : Colors.light.error}
           />
         </View>
         <View style={styles.transactionDetails}>
@@ -139,13 +142,19 @@ const RecentTransaction = ({
           styles.transactionAmount,
           { color: isIncome ? Colors.light.success : Colors.light.text }
         ]}>
-          {isIncome ? '+' : ''}
-          {isBaseCurrency 
-            ? formatCurrency(displayAmount)
-            : `${getCurrencySymbol(item.currency)} ${displayAmount.toFixed(2)}`
-          }
+          {showAmounts ? (
+            <>
+              {isIncome ? '+' : ''}
+              {isBaseCurrency
+                ? formatCurrency(displayAmount)
+                : `${getCurrencySymbol(item.currency)} ${displayAmount.toFixed(2)}`
+              }
+            </>
+          ) : (
+            '••••••'
+          )}
         </Text>
-        {!isBaseCurrency && item.currency && (
+        {showAmounts && !isBaseCurrency && item.currency && (
           <Text style={styles.transactionCurrency}>{item.currency}</Text>
         )}
       </View>
@@ -161,6 +170,9 @@ export default function DashboardScreen() {
   const [showAIInsights, setShowAIInsights] = useState(false);
   const [notificationCount, setNotificationCount] = useState(0);
   const [isOffline, setIsOffline] = useState(false);
+  const [showAmounts, setShowAmounts] = useState(true); // Default visible
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const [privacyPreferenceLoaded, setPrivacyPreferenceLoaded] = useState(false);
   const queryClient = useQueryClient();
 
   // Date filtering states
@@ -194,6 +206,17 @@ export default function DashboardScreen() {
     },
     enabled: !!user,
   });
+
+  // Load privacy preference from profile
+  useEffect(() => {
+    if (profile && !privacyPreferenceLoaded) {
+      const preference = profile.privacy_preference;
+      if (preference === 'show' || preference === 'hide') {
+        setShowAmounts(preference === 'show');
+        setPrivacyPreferenceLoaded(true);
+      }
+    }
+  }, [profile, privacyPreferenceLoaded]);
 
   const { data: dashboardData, isLoading, refetch } = useQuery({
     queryKey: ['dashboard', user?.id],
@@ -360,6 +383,47 @@ const handleOpenInsights = async () => {
     }
   };
 
+  // Save privacy preference to Supabase
+  const savePrivacyPreference = async (preference: 'show' | 'hide') => {
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ privacy_preference: preference })
+        .eq('id', user!.id);
+
+      if (error) throw error;
+
+      // Invalidate profile cache
+      queryClient.invalidateQueries({ queryKey: ['profile', user?.id] });
+    } catch (error) {
+      console.error('Error saving privacy preference:', error);
+    }
+  };
+
+  // Handle eye button click
+  const handleEyeToggle = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    const preference = profile?.privacy_preference;
+
+    // If no preference saved, show modal
+    if (!preference || (preference !== 'show' && preference !== 'hide')) {
+      setShowPrivacyModal(true);
+    } else {
+      // Just toggle visibility
+      setShowAmounts(!showAmounts);
+    }
+  };
+
+  // Handle privacy preference selection
+  const handlePrivacySelect = async (preference: 'show' | 'hide') => {
+    await savePrivacyPreference(preference);
+    setShowAmounts(preference === 'show');
+    setPrivacyPreferenceLoaded(true);
+    setShowPrivacyModal(false);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
   // Combine and sort recent transactions
   const recentTransactions = [
     ...(recentIncomes?.map(item => ({ ...item, type: 'income' })) || []),
@@ -490,14 +554,33 @@ const handleOpenInsights = async () => {
                   style={styles.overviewCard}
                 >
                 <View style={styles.overviewPattern}>
-                  <Text style={styles.overviewTitle}>Overview</Text>
+                  <View style={styles.overviewHeader}>
+                    <Text style={styles.overviewTitle}>Overview</Text>
+                    <TouchableOpacity
+                      style={styles.eyeButton}
+                      onPress={handleEyeToggle}
+                      activeOpacity={0.7}
+                    >
+                      <Feather
+                        name={showAmounts ? 'eye' : 'eye-off'}
+                        size={20}
+                        color="rgba(255, 255, 255, 0.9)"
+                      />
+                    </TouchableOpacity>
+                  </View>
                   <Text style={styles.overviewLabel}>Total ({baseCurrency})</Text>
                   <Text style={[
                     styles.overviewValue,
                     { color: netProfit >= 0 ? '#FFFFFF' : '#FCA5A5' }
                   ]}>
-                    {netProfit >= 0 ? '' : '-'}
-                    {formatCurrency(Math.abs(netProfit))}
+                    {showAmounts ? (
+                      <>
+                        {netProfit >= 0 ? '' : '-'}
+                        {formatCurrency(Math.abs(netProfit))}
+                      </>
+                    ) : (
+                      '••••••'
+                    )}
                   </Text>
 
                   <View style={styles.overviewStatsContainer}>
@@ -505,7 +588,7 @@ const handleOpenInsights = async () => {
                       <Feather name="trending-up" size={18} color="#10B981" />
                       <Text style={styles.overviewStatLabel}>Income</Text>
                      <Text style={styles.overviewStatValue}>
-                        {formatCurrency(filteredIncome)}
+                        {showAmounts ? formatCurrency(filteredIncome) : '••••••'}
                       </Text>
                     </View>
 
@@ -515,7 +598,7 @@ const handleOpenInsights = async () => {
                     <Feather name="trending-down" size={18} color="#EF4444" />
                     <Text style={styles.overviewStatLabel}>Expenses</Text>
                     <Text style={styles.overviewStatValue}>
-                      {formatCurrency(filteredExpenses)}
+                      {showAmounts ? formatCurrency(filteredExpenses) : '••••••'}
                     </Text>
                   </View>
                 </View>
@@ -536,7 +619,7 @@ const handleOpenInsights = async () => {
               </View>
               <Text style={styles.metricTitle}>Income</Text>
               <Text style={styles.metricValue}>
-                {formatCurrency(filteredIncome)}
+                {showAmounts ? formatCurrency(filteredIncome) : '••••••'}
               </Text>
             </TouchableOpacity>
 
@@ -551,7 +634,7 @@ const handleOpenInsights = async () => {
       </View>
       <Text style={styles.metricTitle}>Expenses</Text>
       <Text style={styles.metricValue}>
-        {formatCurrency(filteredExpenses)}
+        {showAmounts ? formatCurrency(filteredExpenses) : '••••••'}
       </Text>
     </TouchableOpacity>
   </View>
@@ -564,7 +647,7 @@ const handleOpenInsights = async () => {
       </View>
       <Text style={styles.metricTitle}>Pending</Text>
       <Text style={styles.metricValue}>
-        {formatCurrency(dashboardData?.pendingInvoices || 0)}
+        {showAmounts ? formatCurrency(dashboardData?.pendingInvoices || 0) : '••••••'}
       </Text>
     </TouchableOpacity>
 
@@ -575,7 +658,7 @@ const handleOpenInsights = async () => {
       </View>
       <Text style={styles.metricTitle}>Invoices</Text>
       <Text style={styles.metricValue}>
-        {dashboardData?.invoiceCount || 0}
+        {showAmounts ? (dashboardData?.invoiceCount || 0) : '•••'}
       </Text>
     </TouchableOpacity>
   </View>
@@ -601,11 +684,12 @@ const handleOpenInsights = async () => {
                 <View style={styles.transactionsList}>
                   {recentTransactions.length > 0 ? (
                     recentTransactions.map((item) => (
-                      <RecentTransaction 
-                        key={item.id} 
-                        item={item} 
-                        type={item.type as 'income' | 'expense'} 
+                      <RecentTransaction
+                        key={item.id}
+                        item={item}
+                        type={item.type as 'income' | 'expense'}
                         navigation={navigation}
+                        showAmounts={showAmounts}
                       />
                     ))
                   ) : (
@@ -631,6 +715,75 @@ const handleOpenInsights = async () => {
       loading={aiLoading}
       onRefresh={handleRefreshInsights}
     />
+
+      {/* Privacy Preference Modal */}
+      <Modal
+        visible={showPrivacyModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowPrivacyModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.privacyModalContainer}>
+            {/* Header with Gradient */}
+            <LinearGradient
+              colors={['#4F46E5', '#7C3AED'] as const}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.privacyModalHeader}
+            >
+              <Feather name="lock" size={28} color="#FFFFFF" />
+              <Text style={styles.privacyModalTitle}>Privacy Preference</Text>
+              <Text style={styles.privacyModalSubtitle}>
+                Choose your default view
+              </Text>
+            </LinearGradient>
+
+            {/* Options */}
+            <View style={styles.privacyModalContent}>
+              <View style={styles.privacyOptionsRow}>
+                {/* Show Amounts Option */}
+                <TouchableOpacity
+                  style={[styles.privacyOption, styles.showOption]}
+                  onPress={() => handlePrivacySelect('show')}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.privacyOptionIconSmall}>
+                    <Feather name="eye" size={22} color="#10B981" />
+                  </View>
+                  <Text style={styles.privacyOptionTitle}>Show</Text>
+                  <Text style={styles.privacyOptionDescription}>
+                    Always visible
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Hide Amounts Option */}
+                <TouchableOpacity
+                  style={[styles.privacyOption, styles.hideOption]}
+                  onPress={() => handlePrivacySelect('hide')}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.privacyOptionIconSmall}>
+                    <Feather name="eye-off" size={22} color="#6366F1" />
+                  </View>
+                  <Text style={styles.privacyOptionTitle}>Hide</Text>
+                  <Text style={styles.privacyOptionDescription}>
+                    Private by default
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Info Text */}
+              <View style={styles.privacyInfoContainer}>
+                <Feather name="info" size={14} color="#9CA3AF" />
+                <Text style={styles.privacyInfoText}>
+                  Toggle anytime with the eye button or change in Profile settings
+                </Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Custom Date Range Modal */}
       <Modal
@@ -943,11 +1096,24 @@ const handleOpenInsights = async () => {
       overviewPattern: {
         padding: Spacing.lg,
       },
+      overviewHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Spacing.sm,
+      },
       overviewTitle: {
         fontSize: 16,
         fontWeight: '600',
         color: 'rgba(255, 255, 255, 0.9)',
-        marginBottom: Spacing.sm,
+      },
+      eyeButton: {
+        width: 36,
+        height: 36,
+        borderRadius: BorderRadius.full,
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        justifyContent: 'center',
+        alignItems: 'center',
       },
       overviewLabel: {
         fontSize: 13,
@@ -1191,6 +1357,95 @@ const handleOpenInsights = async () => {
         fontSize: 16,
         fontWeight: '600',
         color: '#FFFFFF',
+      },
+      // Privacy Modal Styles
+      privacyModalContainer: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 24,
+        width: '90%',
+        maxWidth: 420,
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.3,
+        shadowRadius: 16,
+        elevation: 10,
+      },
+      privacyModalHeader: {
+        padding: Spacing.xl,
+        alignItems: 'center',
+      },
+      privacyModalTitle: {
+        fontSize: 22,
+        fontWeight: '700',
+        color: '#FFFFFF',
+        marginTop: Spacing.sm,
+        marginBottom: 4,
+      },
+      privacyModalSubtitle: {
+        fontSize: 14,
+        color: 'rgba(255, 255, 255, 0.9)',
+      },
+      privacyModalContent: {
+        padding: Spacing.lg,
+        paddingTop: Spacing.md,
+      },
+      privacyOptionsRow: {
+        flexDirection: 'row',
+        gap: Spacing.md,
+        marginBottom: Spacing.lg,
+      },
+      privacyOption: {
+        flex: 1,
+        backgroundColor: '#F9FAFB',
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.md,
+        alignItems: 'center',
+      },
+      showOption: {
+        backgroundColor: '#F0FDF4',
+      },
+      hideOption: {
+        backgroundColor: '#EEF2FF',
+      },
+      privacyOptionIconSmall: {
+        width: 48,
+        height: 48,
+        borderRadius: BorderRadius.full,
+        backgroundColor: '#FFFFFF',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: Spacing.xs,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.08,
+        shadowRadius: 4,
+        elevation: 2,
+      },
+      privacyOptionTitle: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: Colors.light.text,
+        marginBottom: 2,
+      },
+      privacyOptionDescription: {
+        fontSize: 11,
+        color: Colors.light.textSecondary,
+        textAlign: 'center',
+      },
+      privacyInfoContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: Spacing.xs,
+        paddingTop: Spacing.sm,
+        paddingHorizontal: Spacing.md,
+      },
+      privacyInfoText: {
+        fontSize: 12,
+        color: '#6B7280',
+        textAlign: 'center',
+        flex: 1,
       },
     });
     

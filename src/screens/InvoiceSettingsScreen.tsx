@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
   Switch,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,7 +25,9 @@ export default function InvoiceSettingsScreen() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  
+  const [paymentMethodsCount, setPaymentMethodsCount] = useState(0);
+  const [hasPaymentAccount, setHasPaymentAccount] = useState(false);
+
   const [settings, setSettings] = useState({
     // Company Details
     company_name: '',
@@ -76,6 +79,25 @@ export default function InvoiceSettingsScreen() {
           email_notifications: data.email_notifications !== false,
         });
       }
+
+      // Load payment methods count
+      const { data: methods } = await supabase
+        .from('payment_methods')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('is_enabled', true);
+
+      setPaymentMethodsCount(methods?.length || 0);
+
+      // Check payment accounts
+      const { data: accounts } = await supabase
+        .from('user_payment_accounts')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('onboarding_completed', true);
+
+      setHasPaymentAccount(accounts && accounts.length > 0);
+
     } catch (err) {
       console.error('Error loading settings:', err);
     } finally {
@@ -85,7 +107,7 @@ export default function InvoiceSettingsScreen() {
 
   const handleSave = async () => {
     if (!user) return;
-    
+
     setSaving(true);
     try {
       // Check if settings exist
@@ -94,20 +116,20 @@ export default function InvoiceSettingsScreen() {
         .select('id')
         .eq('user_id', user.id)
         .single();
-      
+
       const settingsData = {
         ...settings,
         payment_terms: parseInt(settings.payment_terms.toString()) || 30,
         default_tax_rate: parseFloat(settings.default_tax_rate.toString()) || 0,
         updated_at: new Date().toISOString()
       };
-      
+
       if (existing) {
         const { error } = await supabase
           .from('invoice_settings')
           .update(settingsData)
           .eq('user_id', user.id);
-        
+
         if (error) throw error;
       } else {
         const { error } = await supabase
@@ -116,10 +138,10 @@ export default function InvoiceSettingsScreen() {
             ...settingsData,
             user_id: user.id
           }]);
-        
+
         if (error) throw error;
       }
-      
+
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert('Success', 'Settings saved successfully!');
       navigation.goBack();
@@ -127,6 +149,21 @@ export default function InvoiceSettingsScreen() {
       Alert.alert('Error', 'Failed to save settings: ' + err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleOpenWebDashboard = async () => {
+    const url = 'https://smartcfo.webcraftio.com/invoices';
+    try {
+      const canOpen = await Linking.canOpenURL(url);
+      if (canOpen) {
+        await Linking.openURL(url);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      } else {
+        Alert.alert('Error', 'Unable to open web dashboard');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to open web dashboard');
     }
   };
 
@@ -170,7 +207,11 @@ export default function InvoiceSettingsScreen() {
         </View>
       </LinearGradient>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.content}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+      >
         {/* Company Information */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Company Information</Text>
@@ -326,7 +367,77 @@ export default function InvoiceSettingsScreen() {
             />
           </View>
         </View>
+
+        {/* Payment Features Info */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Payment Features</Text>
+
+          <View style={styles.infoCard}>
+            <View style={styles.infoCardHeader}>
+              <Feather name="credit-card" size={20} color="#8B5CF6" />
+              <Text style={styles.infoCardTitle}>Payment Methods</Text>
+            </View>
+            <Text style={styles.infoCardText}>
+              {paymentMethodsCount > 0
+                ? `${paymentMethodsCount} payment method${paymentMethodsCount > 1 ? 's' : ''} configured`
+                : 'No payment methods configured'}
+            </Text>
+            <View style={styles.infoCardFooter}>
+              <Feather name="globe" size={14} color="#6B7280" />
+              <Text style={styles.infoCardFooterText}>
+                Manage payment methods on web app
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.infoCard}>
+            <View style={styles.infoCardHeader}>
+              <Feather name="dollar-sign" size={20} color="#10B981" />
+              <Text style={styles.infoCardTitle}>Online Payments</Text>
+            </View>
+            <View style={styles.statusRow}>
+              {hasPaymentAccount ? (
+                <>
+                  <Feather name="check-circle" size={16} color="#10B981" />
+                  <Text style={[styles.infoCardText, { color: '#10B981' }]}>
+                    Stripe Connected
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Feather name="alert-circle" size={16} color="#F59E0B" />
+                  <Text style={[styles.infoCardText, { color: '#F59E0B' }]}>
+                    Not Connected
+                  </Text>
+                </>
+              )}
+            </View>
+            <View style={styles.infoCardFooter}>
+              <Feather name="globe" size={14} color="#6B7280" />
+              <Text style={styles.infoCardFooterText}>
+                Connect Stripe on web app to accept online payments
+              </Text>
+            </View>
+          </View>
+        </View>
       </ScrollView>
+
+      {/* Floating Action Button */}
+      <TouchableOpacity
+        style={styles.floatingButton}
+        onPress={handleOpenWebDashboard}
+        activeOpacity={0.9}
+      >
+        <LinearGradient
+          colors={['#8B5CF6', '#7C3AED']}
+          style={styles.floatingButtonGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <Feather name="external-link" size={20} color="#FFFFFF" />
+          <Text style={styles.floatingButtonText}>Open in Web Dashboard</Text>
+        </LinearGradient>
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -365,6 +476,9 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 100,
   },
   section: {
     backgroundColor: '#FFFFFF',
@@ -417,5 +531,77 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6B7280',
     marginTop: 2,
+  },
+  // Payment Features Info Styles
+  infoCard: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  infoCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  infoCardTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  infoCardText: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginBottom: Spacing.xs,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginBottom: Spacing.xs,
+  },
+  infoCardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginTop: Spacing.sm,
+    paddingTop: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+  },
+  infoCardFooterText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontStyle: 'italic',
+  },
+  // Floating Action Button Styles
+  floatingButton: {
+    position: 'absolute',
+    bottom: 24,
+    left: 20,
+    right: 20,
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+    shadowColor: '#8B5CF6',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  floatingButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    gap: 10,
+  },
+  floatingButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
   },
 });

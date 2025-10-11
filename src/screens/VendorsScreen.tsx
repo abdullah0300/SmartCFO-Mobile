@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,13 +8,17 @@ import {
   RefreshControl,
   TextInput,
   Alert,
+  ScrollView,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import { useNavigation } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
+import { subMonths } from 'date-fns';
 
 import { useAuth } from '../hooks/useAuth';
 import { getVendors, supabase } from '../services/api';
@@ -22,6 +26,7 @@ import { Colors, Spacing, Typography, BorderRadius } from '../constants/Colors';
 import { Vendor } from '../types';
 import { AddVendorModal } from '../components/vendors/AddVendorModal';
 import { EditVendorModal } from '../components/vendors/EditVendorModal';
+import { useSettings } from '../contexts/SettingsContext';
 
 const VendorItem = ({ 
   item, 
@@ -67,8 +72,10 @@ export default function VendorsScreen() {
   const { user } = useAuth();
   const navigation = useNavigation();
   const queryClient = useQueryClient();
+  const { formatCurrency } = useSettings();
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
@@ -78,6 +85,60 @@ export default function VendorsScreen() {
     queryFn: () => getVendors(user!.id),
     enabled: !!user,
   });
+
+  // Fetch expenses to calculate spending
+  const { data: expenses } = useQuery({
+    queryKey: ['expenses', user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('expenses')
+        .select('vendor_id, amount, date')
+        .eq('user_id', user!.id);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user,
+  });
+
+  // Calculate KPIs
+  const kpis = useMemo(() => {
+    if (!vendors || !expenses) {
+      return {
+        totalVendors: vendors?.length || 0,
+        activeVendors: 0,
+        totalExpenses: 0,
+        monthExpenses: 0,
+      };
+    }
+
+    // Get vendors with expenses in last 3 months
+    const threeMonthsAgo = subMonths(new Date(), 3);
+    const activeVendorIds = new Set(
+      expenses
+        .filter(exp => new Date(exp.date) >= threeMonthsAgo)
+        .map(exp => exp.vendor_id)
+        .filter(Boolean)
+    );
+
+    // Calculate total expenses
+    const totalExpenses = expenses.reduce((sum, exp) => sum + (exp.amount || 0), 0);
+
+    // Calculate this month's expenses
+    const firstDayOfMonth = new Date();
+    firstDayOfMonth.setDate(1);
+    firstDayOfMonth.setHours(0, 0, 0, 0);
+
+    const monthExpenses = expenses
+      .filter(exp => new Date(exp.date) >= firstDayOfMonth)
+      .reduce((sum, exp) => sum + (exp.amount || 0), 0);
+
+    return {
+      totalVendors: vendors.length,
+      activeVendors: activeVendorIds.size,
+      totalExpenses,
+      monthExpenses,
+    };
+  }, [vendors, expenses]);
 
   const deleteMutation = useMutation({
     mutationFn: async (vendorId: string) => {
@@ -144,50 +205,162 @@ export default function VendorsScreen() {
         style={styles.headerGradient}
       >
         <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={styles.backButton}
-          >
-            <Feather name="arrow-left" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-          
-          <Text style={styles.headerTitle}>Vendors</Text>
-          
-          <TouchableOpacity
-            style={styles.addButton}
-            onPress={() => setShowAddModal(true)}
-          >
-            <View style={styles.addButtonInner}>
-              <Feather name="plus" size={24} color="#EF4444" />
+          <View style={styles.headerLeft}>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              style={styles.backButton}
+            >
+              <Feather name="arrow-left" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+            <View>
+              <Text style={styles.headerSubtitle}>Manage your</Text>
+              <Text style={styles.headerTitle}>Vendors</Text>
             </View>
-          </TouchableOpacity>
+          </View>
+
+          <View style={styles.headerRight}>
+            <TouchableOpacity
+              style={styles.searchButton}
+              onPress={() => {
+                setShowSearch(!showSearch);
+                if (showSearch) {
+                  setSearchQuery('');
+                  Keyboard.dismiss();
+                }
+              }}
+            >
+              <BlurView intensity={80} tint="light" style={styles.searchButtonBlur}>
+                <View style={styles.searchButtonInner}>
+                  <Feather name={showSearch ? "x" : "search"} size={18} color="#EF4444" />
+                </View>
+              </BlurView>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={() => setShowAddModal(true)}
+            >
+              <BlurView intensity={80} tint="light" style={styles.addButtonBlur}>
+                <View style={styles.addButtonInner}>
+                  <Feather name="plus" size={18} color="#EF4444" />
+                </View>
+              </BlurView>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Search Bar */}
-        <View style={styles.searchContainer}>
-          <Feather name="search" size={20} color="#94A3B8" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search vendors..."
-            placeholderTextColor="#94A3B8"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Feather name="x" size={20} color="#94A3B8" />
-            </TouchableOpacity>
-          )}
+        {showSearch && (
+          <View style={styles.searchContainer}>
+            <View style={styles.searchInputWrapper}>
+              <Feather name="search" size={16} color="rgba(255,255,255,0.6)" />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search vendors..."
+                placeholderTextColor="rgba(255,255,255,0.6)"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus
+                returnKeyType="search"
+                onSubmitEditing={() => Keyboard.dismiss()}
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')}>
+                  <Feather name="x-circle" size={16} color="rgba(255,255,255,0.6)" />
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        )}
+      </LinearGradient>
+
+      {/* KPI Cards */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.kpiContainer}
+        style={styles.kpiScrollView}
+      >
+        <View style={styles.kpiCard}>
+          <LinearGradient
+            colors={['#EF4444', '#DC2626']}
+            style={styles.kpiGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          >
+            <View style={styles.kpiHeader}>
+              <View style={styles.kpiIconContainer}>
+                <MaterialIcons name="store" size={24} color="#FFFFFF" />
+              </View>
+              <View style={styles.kpiTextContainer}>
+                <Text style={styles.kpiLabel}>Total Vendors</Text>
+                <Text style={styles.kpiValue}>{kpis.totalVendors}</Text>
+              </View>
+            </View>
+          </LinearGradient>
         </View>
 
-        {/* Stats */}
-        <View style={styles.stats}>
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>{vendors?.length || 0}</Text>
-            <Text style={styles.statLabel}>Total Vendors</Text>
-          </View>
+        <View style={styles.kpiCard}>
+          <LinearGradient
+            colors={['#10B981', '#059669']}
+            style={styles.kpiGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          >
+            <View style={styles.kpiHeader}>
+              <View style={styles.kpiIconContainer}>
+                <MaterialIcons name="trending-up" size={24} color="#FFFFFF" />
+              </View>
+              <View style={styles.kpiTextContainer}>
+                <Text style={styles.kpiLabel}>Active Vendors</Text>
+                <Text style={styles.kpiValue}>{kpis.activeVendors}</Text>
+              </View>
+            </View>
+          </LinearGradient>
         </View>
-      </LinearGradient>
+
+        <View style={styles.kpiCard}>
+          <LinearGradient
+            colors={['#F59E0B', '#D97706']}
+            style={styles.kpiGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          >
+            <View style={styles.kpiHeader}>
+              <View style={styles.kpiIconContainer}>
+                <MaterialIcons name="receipt" size={24} color="#FFFFFF" />
+              </View>
+              <View style={styles.kpiTextContainer}>
+                <Text style={styles.kpiLabel}>Total Expenses</Text>
+                <Text style={styles.kpiValue} numberOfLines={1} adjustsFontSizeToFit>
+                  {formatCurrency(kpis.totalExpenses)}
+                </Text>
+              </View>
+            </View>
+          </LinearGradient>
+        </View>
+
+        <View style={styles.kpiCard}>
+          <LinearGradient
+            colors={['#8B5CF6', '#7C3AED']}
+            style={styles.kpiGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          >
+            <View style={styles.kpiHeader}>
+              <View style={styles.kpiIconContainer}>
+                <MaterialIcons name="calendar-today" size={24} color="#FFFFFF" />
+              </View>
+              <View style={styles.kpiTextContainer}>
+                <Text style={styles.kpiLabel}>This Month</Text>
+                <Text style={styles.kpiValue} numberOfLines={1} adjustsFontSizeToFit>
+                  {formatCurrency(kpis.monthExpenses)}
+                </Text>
+              </View>
+            </View>
+          </LinearGradient>
+        </View>
+      </ScrollView>
 
       <FlatList
         data={filteredVendors}
@@ -266,72 +439,155 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8F9FA',
   },
   headerGradient: {
-    paddingBottom: Spacing.lg,
+    paddingBottom: 12,
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 8,
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
   },
   backButton: {
-    padding: Spacing.sm,
-    marginLeft: -Spacing.sm,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.8)',
+    marginBottom: 1,
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
     color: '#FFFFFF',
-    flex: 1,
-    textAlign: 'center',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  searchButton: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  searchButtonBlur: {
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  searchButtonInner: {
+    width: 36,
+    height: 36,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   addButton: {
-    marginRight: -Spacing.sm,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  addButtonBlur: {
+    borderRadius: 20,
+    overflow: 'hidden',
   },
   addButtonInner: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.full,
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    width: 36,
+    height: 36,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
   },
   searchContainer: {
+    paddingTop: 12,
+    paddingBottom: 4,
+    paddingHorizontal: 20,
+  },
+  searchInputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    marginHorizontal: Spacing.lg,
-    marginTop: Spacing.md,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
   },
   searchInput: {
     flex: 1,
-    marginLeft: Spacing.sm,
-    fontSize: 16,
-    color: Colors.light.text,
-  },
-  stats: {
-    flexDirection: 'row',
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-  },
-  statItem: {
-    alignItems: 'center',
-  },
-  statValue: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 14,
     color: '#FFFFFF',
   },
-  statLabel: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
+  kpiScrollView: {
+    marginTop: 16,
+  },
+  kpiContainer: {
+    paddingHorizontal: 20,
+    gap: 16,
+  },
+  kpiCard: {
+    borderRadius: 20,
+  },
+  kpiGradient: {
+    width: 180,
+    paddingVertical: 20,
+    paddingHorizontal: 18,
+    borderRadius: 20,
+  },
+  kpiHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  kpiIconContainer: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: 'rgba(0, 0, 0, 0.2)',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  kpiTextContainer: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  kpiLabel: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  kpiValue: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.5,
+    textShadowColor: 'rgba(0, 0, 0, 0.2)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
   },
   listContent: {
-    paddingTop: Spacing.md,
+    paddingTop: 8,
     paddingBottom: 100,
   },
   vendorItem: {

@@ -15,6 +15,7 @@ import {
   Platform,
   FlatList,
   ViewToken,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -23,6 +24,7 @@ import { format, subMonths, startOfYear, parseISO, differenceInDays } from 'date
 import { useNavigation } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import * as Haptics from 'expo-haptics';
 
 import { useAuth } from '../hooks/useAuth';
 import { useSettings } from '../contexts/SettingsContext';
@@ -301,9 +303,24 @@ export default function ReportsOverviewScreen() {
       'PDF export is available on the web dashboard. Would you like to open it?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Open Web', onPress: () => {} },
+        { text: 'Open Web', onPress: handleOpenWebDashboard },
       ]
     );
+  };
+
+  const handleOpenWebDashboard = async () => {
+    const url = 'https://smartcfo.webcraftio.com/reports';
+    try {
+      const canOpen = await Linking.canOpenURL(url);
+      if (canOpen) {
+        await Linking.openURL(url);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      } else {
+        Alert.alert('Error', 'Unable to open web dashboard');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to open web dashboard');
+    }
   };
 
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
@@ -541,6 +558,7 @@ export default function ReportsOverviewScreen() {
           />
         }
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
       >
         {/* Period Selector */}
         <View style={styles.periodContainer}>
@@ -780,9 +798,24 @@ export default function ReportsOverviewScreen() {
           </View>
         )}
 
-        {/* Bottom Spacing */}
-        <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* Floating Action Button */}
+      <TouchableOpacity
+        style={styles.floatingButton}
+        onPress={handleOpenWebDashboard}
+        activeOpacity={0.9}
+      >
+        <LinearGradient
+          colors={['#8B5CF6', '#7C3AED']}
+          style={styles.floatingButtonGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <Feather name="external-link" size={20} color="#FFFFFF" />
+          <Text style={styles.floatingButtonText}>Open in Web Dashboard</Text>
+        </LinearGradient>
+      </TouchableOpacity>
 
       {/* Custom Date Range Modal */}
       <Modal
@@ -857,6 +890,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F9FAFB',
+  },
+  scrollContent: {
+    paddingBottom: 100,
   },
   loadingContainer: {
     flex: 1,
@@ -1292,5 +1328,32 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  // Floating Action Button Styles
+  floatingButton: {
+    position: 'absolute',
+    bottom: 24,
+    left: 20,
+    right: 20,
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+    shadowColor: '#8B5CF6',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  floatingButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    gap: 10,
+  },
+  floatingButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
   },
 });

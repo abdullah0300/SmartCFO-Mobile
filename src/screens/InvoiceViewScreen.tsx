@@ -62,6 +62,8 @@ export default function InvoiceViewScreen() {
   const [sendingEmail, setSendingEmail] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showSendOptionsModal, setShowSendOptionsModal] = useState(false);
+  const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
+  const [hasPaymentAccount, setHasPaymentAccount] = useState(false);
   const formatAmount = (amount: number, currency?: string) => {
     const symbol = getCurrencySymbol(currency || baseCurrency);
     return `${symbol}${amount.toFixed(2)}`;
@@ -70,24 +72,25 @@ export default function InvoiceViewScreen() {
   const invoiceId = route.params?.invoiceId;
 
   useEffect(() => {
-    if (invoiceId) {
+    if (invoiceId && user) {
       loadInvoice();
+      loadPaymentMethods();
     }
-  }, [invoiceId]);
+  }, [invoiceId, user]);
 
   const loadInvoice = async () => {
     if (!user) return;
-    
+
     try {
       setLoading(true);
-      
+
       // Load invoice with all related data
       const [invoiceData, profileData, settingsData] = await Promise.all([
         getInvoice(invoiceId),
         supabase.from('profiles').select('*').eq('id', user.id).single(),
         supabase.from('invoice_settings').select('*').eq('user_id', user.id).single(),
       ]);
-      
+
       console.log('Invoice data:', invoiceData);
       console.log('Is recurring?', invoiceData.is_recurring);
       setInvoice(invoiceData);
@@ -99,6 +102,41 @@ export default function InvoiceViewScreen() {
       Alert.alert('Error', 'Failed to load invoice');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadPaymentMethods = async () => {
+    if (!user) return;
+
+    try {
+      // Fetch user's payment methods
+      const { data: methods, error: methodsError } = await supabase
+        .from('payment_methods')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_enabled', true)
+        .order('display_order', { ascending: true });
+
+      if (methodsError) {
+        console.error('Error loading payment methods:', methodsError);
+        return;
+      }
+
+      setPaymentMethods(methods || []);
+
+      // Check if user has connected payment account
+      const { data: accounts, error: accountsError } = await supabase
+        .from('user_payment_accounts')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('onboarding_completed', true);
+
+      if (!accountsError && accounts && accounts.length > 0) {
+        setHasPaymentAccount(true);
+      }
+
+    } catch (error) {
+      console.error('Error in loadPaymentMethods:', error);
     }
   };
   const generatePublicLink = async (): Promise<string> => {
@@ -687,12 +725,83 @@ const handleSendViaWhatsApp = async () => {
               </View>
             )}
 
-            {/* Payment Instructions */}
-            {invoiceSettings?.payment_instructions && (
+            {/* Payment Methods - NEW SYSTEM */}
+            {paymentMethods.length > 0 && (
+              <View style={styles.paymentMethodsSection}>
+                <Text style={styles.sectionTitle}>Payment Information</Text>
+                {paymentMethods.map((method, index) => (
+                  <View
+                    key={method.id}
+                    style={[
+                      styles.paymentMethodCard,
+                      method.is_primary && styles.primaryPaymentCard
+                    ]}
+                  >
+                    <View style={styles.paymentMethodHeader}>
+                      <Text style={styles.paymentMethodName}>
+                        {method.display_name}
+                        {method.is_primary && " ⭐"}
+                      </Text>
+                    </View>
+
+                    <View style={styles.paymentMethodFields}>
+                      {Object.entries(method.fields || {}).map(([key, value]: [string, any]) => (
+                        <View key={key} style={styles.paymentField}>
+                          <Text style={styles.paymentFieldLabel}>
+                            {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:
+                          </Text>
+                          <Text style={styles.paymentFieldValue}>{value}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    {method.instructions && (
+                      <View style={styles.paymentInstructionsBox}>
+                        <Text style={styles.paymentInstructionsText}>
+                          {method.instructions}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Fallback: Old Payment Instructions (for backward compatibility) */}
+            {paymentMethods.length === 0 && invoiceSettings?.payment_instructions && (
               <View style={styles.paymentInstructions}>
                 <Text style={styles.sectionTitle}>Payment Instructions</Text>
                 <Text style={styles.paymentText}>
                   {invoiceSettings.payment_instructions}
+                </Text>
+              </View>
+            )}
+
+            {/* Pay Now Button - Stripe Integration */}
+            {hasPaymentAccount && invoice.status !== 'paid' && invoice.status !== 'canceled' && (
+              <View style={styles.payNowSection}>
+                <TouchableOpacity
+                  style={styles.payNowButton}
+                  onPress={() => {
+                    const publicUrl = `${process.env.EXPO_PUBLIC_SITE_URL || 'https://smartcfo.webcraftio.com'}/invoice/public/${invoice.id}`;
+                    Linking.openURL(publicUrl);
+                    Alert.alert(
+                      'Online Payment',
+                      'Opening payment page in browser...',
+                      [{ text: 'OK' }]
+                    );
+                  }}
+                >
+                  <LinearGradient
+                    colors={['#10B981', '#059669'] as const}
+                    style={styles.payNowGradient}
+                  >
+                    <MaterialIcons name="payment" size={20} color="#FFFFFF" />
+                    <Text style={styles.payNowButtonText}>Pay Now Online</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+                <Text style={styles.payNowHint}>
+                  Secure payment powered by Stripe
                 </Text>
               </View>
             )}
@@ -1336,5 +1445,96 @@ const styles = StyleSheet.create({
   sendOptionSubtitle: {
     fontSize: 13,
     color: '#6B7280',
+  },
+  // Payment Methods Styles
+  paymentMethodsSection: {
+    marginTop: Spacing.lg,
+    paddingHorizontal: Spacing.lg,
+  },
+  paymentMethodCard: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  primaryPaymentCard: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#818CF8',
+    borderWidth: 2,
+  },
+  paymentMethodHeader: {
+    marginBottom: Spacing.sm,
+  },
+  paymentMethodName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  paymentMethodFields: {
+    gap: Spacing.xs,
+  },
+  paymentField: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  paymentFieldLabel: {
+    fontSize: 13,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  paymentFieldValue: {
+    fontSize: 13,
+    color: '#111827',
+    fontWeight: '600',
+    flex: 1,
+    textAlign: 'right',
+  },
+  paymentInstructionsBox: {
+    marginTop: Spacing.sm,
+    padding: Spacing.sm,
+    backgroundColor: '#DBEAFE',
+    borderRadius: BorderRadius.sm,
+  },
+  paymentInstructionsText: {
+    fontSize: 12,
+    color: '#1E40AF',
+    lineHeight: 18,
+  },
+  // Pay Now Button Styles
+  payNowSection: {
+    marginTop: Spacing.lg,
+    paddingHorizontal: Spacing.lg,
+    alignItems: 'center',
+  },
+  payNowButton: {
+    width: '100%',
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  payNowGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
+    gap: Spacing.sm,
+  },
+  payNowButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  payNowHint: {
+    marginTop: Spacing.sm,
+    fontSize: 12,
+    color: '#6B7280',
+    textAlign: 'center',
   },
 });

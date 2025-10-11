@@ -137,8 +137,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: provider,
         options: {
-          redirectTo: 'smartcfo://', // Deep link scheme
-          // skipBrowserRedirect is NOT set - let Supabase handle the token exchange
+          redirectTo: 'smartcfo://', // Deep link scheme for mobile
+          skipBrowserRedirect: true, // We handle the redirect manually
         },
       });
 

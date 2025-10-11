@@ -36,6 +36,11 @@
           "data": [
             {
               "scheme": "smartcfo"
+            },
+            {
+              "scheme": "https",
+              "host": "adsbnzqorfmgnneiopcr.supabase.co",
+              "pathPrefix": "/auth/v1/callback"
             }
           ],
           "category": ["BROWSABLE", "DEFAULT"]

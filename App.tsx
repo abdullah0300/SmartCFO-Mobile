@@ -129,62 +129,65 @@ function AuthNavigator() {
       const url = event.url;
       console.log('🔗 Deep link received:', url);
 
-      // Check if this is an OAuth callback
-      if (url.includes('#') || url.includes('access_token') || url.includes('error')) {
-        console.log('📱 OAuth callback detected, processing session...');
+      // Only process smartcfo:// scheme URLs (our custom scheme)
+      if (!url.startsWith('smartcfo://')) {
+        console.log('ℹ️ Not a smartcfo deep link, ignoring');
+        return;
+      }
 
-        try {
-          // Extract the URL hash/fragment
-          const hashIndex = url.indexOf('#');
+      try {
+        // Extract URL parameters - check both # (implicit) and ? (PKCE) parameters
+        let params: URLSearchParams;
 
-          if (hashIndex !== -1) {
-            const fragment = url.substring(hashIndex + 1);
-            console.log('📄 URL fragment:', fragment);
-
-            // Parse the fragment into key-value pairs
-            const params = new URLSearchParams(fragment);
-            const accessToken = params.get('access_token');
-            const refreshToken = params.get('refresh_token');
-            const errorCode = params.get('error');
-            const errorDescription = params.get('error_description');
-
-            // Check for errors first
-            if (errorCode) {
-              console.error('❌ OAuth error:', errorCode, errorDescription);
-              // You could show an alert here
-              return;
-            }
-
-            if (accessToken && refreshToken) {
-              console.log('✅ Tokens extracted from URL');
-              console.log('🔑 Access token length:', accessToken.length);
-              console.log('🔑 Refresh token length:', refreshToken.length);
-
-              // Set the session using Supabase
-              const { data, error } = await supabase.auth.setSession({
-                access_token: accessToken,
-                refresh_token: refreshToken,
-              });
-
-              if (error) {
-                console.error('❌ Error setting session:', error.message);
-              } else {
-                console.log('✅ OAuth session established successfully!');
-                console.log('👤 User email:', data.user?.email);
-                console.log('👤 User ID:', data.user?.id);
-              }
-            } else {
-              console.warn('⚠️ No access/refresh tokens found in URL');
-              console.log('Available params:', Array.from(params.keys()).join(', '));
-            }
-          } else {
-            console.warn('⚠️ No hash fragment in URL');
-          }
-        } catch (error: any) {
-          console.error('❌ Error processing OAuth callback:', error.message);
+        if (url.includes('#')) {
+          // Implicit flow: tokens in fragment
+          const fragment = url.split('#')[1];
+          params = new URLSearchParams(fragment);
+        } else if (url.includes('?')) {
+          // PKCE flow: code in query params
+          const query = url.split('?')[1];
+          params = new URLSearchParams(query);
+        } else {
+          console.log('ℹ️ No OAuth parameters in URL');
+          return;
         }
-      } else {
-        console.log('ℹ️ Deep link is not an OAuth callback');
+
+        console.log('📄 OAuth params found:', Array.from(params.keys()).join(', '));
+
+        // Check for errors
+        const errorCode = params.get('error');
+        const errorDescription = params.get('error_description');
+
+        if (errorCode) {
+          console.error('❌ OAuth error:', errorCode, errorDescription);
+          return;
+        }
+
+        // Handle implicit flow (direct tokens)
+        const accessToken = params.get('access_token');
+        const refreshToken = params.get('refresh_token');
+
+        if (accessToken && refreshToken) {
+          console.log('✅ Tokens found in URL (implicit flow)');
+          const { data, error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+
+          if (error) {
+            console.error('❌ Error setting session:', error.message);
+          } else {
+            console.log('✅ OAuth session established!');
+            console.log('👤 User:', data.user?.email);
+          }
+          return;
+        }
+
+        // The onAuthStateChange listener in useAuth will handle the session update
+        console.log('✅ OAuth callback processed');
+
+      } catch (error: any) {
+        console.error('❌ Error processing deep link:', error.message);
       }
     };
 

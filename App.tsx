@@ -1,6 +1,6 @@
 // App.tsx
 import React, { useState, useEffect } from 'react';
-import { View, ActivityIndicator, StyleSheet, Linking } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Linking, Alert } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -129,8 +129,9 @@ function AuthNavigator() {
       const url = event.url;
       console.log('🔗 Deep link received:', url);
 
-      // Only process smartcfo:// scheme URLs (our custom scheme)
-      if (!url.startsWith('smartcfo://')) {
+      // Only process smartcfo: scheme URLs (our custom scheme)
+      // Handle both smartcfo:// and smartcfo:? formats
+      if (!url.startsWith('smartcfo:')) {
         console.log('ℹ️ Not a smartcfo deep link, ignoring');
         return;
       }
@@ -143,10 +144,12 @@ function AuthNavigator() {
           // Implicit flow: tokens in fragment
           const fragment = url.split('#')[1];
           params = new URLSearchParams(fragment);
+          console.log('📄 Fragment params:', fragment);
         } else if (url.includes('?')) {
           // PKCE flow: code in query params
           const query = url.split('?')[1];
           params = new URLSearchParams(query);
+          console.log('📄 Query params:', query);
         } else {
           console.log('ℹ️ No OAuth parameters in URL');
           return;
@@ -160,6 +163,7 @@ function AuthNavigator() {
 
         if (errorCode) {
           console.error('❌ OAuth error:', errorCode, errorDescription);
+          Alert.alert('Authentication Error', errorDescription || errorCode);
           return;
         }
 
@@ -167,15 +171,31 @@ function AuthNavigator() {
         const code = params.get('code');
 
         if (code) {
-          console.log('🔐 Authorization code found, exchanging for session...');
+          console.log('🔐 Authorization code found:', code.substring(0, 20) + '...');
+          console.log('🔄 Exchanging code for session...');
 
-          const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+          try {
+            const { data, error } = await supabase.auth.exchangeCodeForSession(code);
 
-          if (error) {
-            console.error('❌ Error exchanging code for session:', error.message);
-          } else {
-            console.log('✅ PKCE OAuth session established!');
-            console.log('👤 User:', data.user?.email);
+            if (error) {
+              console.error('❌ Code exchange error:', {
+                message: error.message,
+                status: error.status,
+                name: error.name
+              });
+              Alert.alert('Login Failed', `Could not complete login: ${error.message}`);
+            } else if (data?.session) {
+              console.log('✅ PKCE OAuth session established!');
+              console.log('👤 User email:', data.user?.email);
+              console.log('🎫 Session expires at:', data.session.expires_at);
+              console.log('🔑 Refresh token present:', !!data.session.refresh_token);
+            } else {
+              console.error('❌ No session returned from code exchange');
+              Alert.alert('Login Failed', 'No session was created');
+            }
+          } catch (exchangeError: any) {
+            console.error('❌ Exception during code exchange:', exchangeError);
+            Alert.alert('Login Failed', `Error: ${exchangeError.message}`);
           }
           return;
         }
@@ -193,6 +213,7 @@ function AuthNavigator() {
 
           if (error) {
             console.error('❌ Error setting session:', error.message);
+            Alert.alert('Login Failed', error.message);
           } else {
             console.log('✅ OAuth session established!');
             console.log('👤 User:', data.user?.email);
@@ -201,9 +222,11 @@ function AuthNavigator() {
         }
 
         console.log('ℹ️ No authorization code or tokens found in callback');
+        Alert.alert('Authentication Issue', 'No authentication data received');
 
       } catch (error: any) {
-        console.error('❌ Error processing deep link:', error.message);
+        console.error('❌ Error processing deep link:', error);
+        Alert.alert('Error', `Failed to process login: ${error.message}`);
       }
     };
 

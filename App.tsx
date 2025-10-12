@@ -163,7 +163,24 @@ function AuthNavigator() {
           return;
         }
 
-        // Handle implicit flow (direct tokens)
+        // Handle PKCE flow (authorization code)
+        const code = params.get('code');
+
+        if (code) {
+          console.log('🔐 Authorization code found, exchanging for session...');
+
+          const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+
+          if (error) {
+            console.error('❌ Error exchanging code for session:', error.message);
+          } else {
+            console.log('✅ PKCE OAuth session established!');
+            console.log('👤 User:', data.user?.email);
+          }
+          return;
+        }
+
+        // Handle implicit flow (direct tokens) - fallback
         const accessToken = params.get('access_token');
         const refreshToken = params.get('refresh_token');
 
@@ -183,8 +200,7 @@ function AuthNavigator() {
           return;
         }
 
-        // The onAuthStateChange listener in useAuth will handle the session update
-        console.log('✅ OAuth callback processed');
+        console.log('ℹ️ No authorization code or tokens found in callback');
 
       } catch (error: any) {
         console.error('❌ Error processing deep link:', error.message);

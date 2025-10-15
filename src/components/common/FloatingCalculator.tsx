@@ -48,11 +48,11 @@ export const FloatingCalculator: React.FC<FloatingCalculatorProps> = ({ position
   const [showFromPicker, setShowFromPicker] = useState(false);
   const [showToPicker, setShowToPicker] = useState(false);
 
-  // Calculator States
-  const [display, setDisplay] = useState('0');
-  const [previousValue, setPreviousValue] = useState<number | null>(null);
-  const [operation, setOperation] = useState<string | null>(null);
-  const [waitingForOperand, setWaitingForOperand] = useState(false);
+  // Calculator States - Redesigned for proper UX
+  const [inputExpression, setInputExpression] = useState(''); // What user is typing (editable)
+  const [resultValue, setResultValue] = useState('0'); // Final result after =
+  const [previewValue, setPreviewValue] = useState(''); // Running total preview
+  const [showResult, setShowResult] = useState(false); // Toggle between input and result mode
 
   const CURRENCY_NAMES: Record<string, string> = {
     USD: 'US Dollar',
@@ -132,112 +132,145 @@ export const FloatingCalculator: React.FC<FloatingCalculatorProps> = ({ position
     setFromAmount(cleaned);
   };
 
-  // ============= CALCULATOR FUNCTIONS =============
+  // ============= CALCULATOR FUNCTIONS - MODERN UX =============
+
+  // Helper function to safely evaluate expression
+  const evaluateExpression = (expr: string): string => {
+    try {
+      if (!expr || expr.trim() === '') return '0';
+
+      // Replace display operators with JS operators
+      const jsExpr = expr
+        .replace(/×/g, '*')
+        .replace(/÷/g, '/')
+        .replace(/−/g, '-');
+
+      // Use Function constructor for safe evaluation (better than eval)
+      const result = Function('"use strict"; return (' + jsExpr + ')')();
+
+      // Format result
+      if (isNaN(result) || !isFinite(result)) return 'Error';
+
+      // Round to avoid floating point errors
+      const rounded = Math.round(result * 1000000000) / 1000000000;
+      return String(rounded);
+    } catch (error) {
+      return 'Error';
+    }
+  };
+
+  // Update preview as user types
+  const updatePreview = (expr: string) => {
+    if (!expr || expr.trim() === '') {
+      setPreviewValue('');
+      return;
+    }
+
+    // Always try to show preview, even if ends with operator
+    // Remove trailing operator and spaces for calculation
+    const cleanExpr = expr.trim().replace(/[+\-×÷]\s*$/, '');
+
+    if (!cleanExpr) {
+      setPreviewValue('');
+      return;
+    }
+
+    const result = evaluateExpression(cleanExpr);
+    if (result !== 'Error' && result !== cleanExpr) {
+      setPreviewValue('= ' + result);
+    } else {
+      setPreviewValue('');
+    }
+  };
 
   const inputDigit = (digit: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    if (waitingForOperand) {
-      setDisplay(String(digit));
-      setWaitingForOperand(false);
+    if (showResult) {
+      // Start new calculation after getting result
+      setInputExpression(digit);
+      setShowResult(false);
+      setPreviewValue('');
     } else {
-      setDisplay(display === '0' ? String(digit) : display + digit);
+      const newExpr = inputExpression + digit;
+      setInputExpression(newExpr);
+      updatePreview(newExpr);
     }
   };
 
   const inputDecimal = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    if (waitingForOperand) {
-      setDisplay('0.');
-      setWaitingForOperand(false);
-    } else if (display.indexOf('.') === -1) {
-      setDisplay(display + '.');
+    if (showResult) {
+      setInputExpression('0.');
+      setShowResult(false);
+      setPreviewValue('');
+    } else {
+      // Check if current number already has decimal
+      const parts = inputExpression.split(/[+\-×÷]/);
+      const currentNumber = parts[parts.length - 1];
+
+      if (currentNumber.indexOf('.') === -1) {
+        const newExpr = inputExpression + '.';
+        setInputExpression(newExpr);
+      }
     }
   };
 
   const clearDisplay = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setDisplay('0');
-    setPreviousValue(null);
-    setOperation(null);
-    setWaitingForOperand(false);
+    setInputExpression('');
+    setResultValue('0');
+    setPreviewValue('');
+    setShowResult(false);
   };
 
-  const clearEntry = () => {
+  const performOperation = (operator: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setDisplay('0');
-  };
 
-  const toggleSign = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const newValue = parseFloat(display) * -1;
-    setDisplay(String(newValue));
-  };
-
-  const inputPercent = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const currentValue = parseFloat(display);
-
-    if (currentValue === 0) return;
-
-    const newValue = currentValue / 100;
-    setDisplay(String(newValue));
-  };
-
-  const performOperation = (nextOperation: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const inputValue = parseFloat(display);
-
-    if (previousValue === null) {
-      setPreviousValue(inputValue);
-    } else if (operation) {
-      const currentValue = previousValue;
-      const newValue = calculate(currentValue, inputValue, operation);
-
-      setDisplay(String(newValue));
-      setPreviousValue(newValue);
-    }
-
-    setWaitingForOperand(true);
-    setOperation(nextOperation);
-  };
-
-  const calculate = (firstValue: number, secondValue: number, operation: string): number => {
-    switch (operation) {
-      case '+':
-        return firstValue + secondValue;
-      case '−':
-        return firstValue - secondValue;
-      case '×':
-        return firstValue * secondValue;
-      case '÷':
-        return secondValue !== 0 ? firstValue / secondValue : 0;
-      default:
-        return secondValue;
+    if (showResult) {
+      // Continue from result
+      setInputExpression(resultValue + ' ' + operator + ' ');
+      setShowResult(false);
+      updatePreview(resultValue);
+    } else {
+      const newExpr = inputExpression + ' ' + operator + ' ';
+      setInputExpression(newExpr);
+      updatePreview(newExpr); // Keep preview showing
     }
   };
 
   const performEquals = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    const inputValue = parseFloat(display);
 
-    if (previousValue !== null && operation) {
-      const newValue = calculate(previousValue, inputValue, operation);
-      setDisplay(String(newValue));
-      setPreviousValue(null);
-      setOperation(null);
-      setWaitingForOperand(true);
-    }
+    if (!inputExpression || inputExpression.trim() === '') return;
+
+    const result = evaluateExpression(inputExpression);
+    setResultValue(result);
+    setShowResult(true);
+    setPreviewValue('');
   };
 
   const handleBackspace = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (display.length > 1) {
-      setDisplay(display.slice(0, -1));
+
+    if (showResult) {
+      // In result mode, backspace clears and starts fresh
+      setInputExpression('');
+      setShowResult(false);
+      setPreviewValue('');
     } else {
-      setDisplay('0');
+      const newExpr = inputExpression.slice(0, -1);
+      setInputExpression(newExpr);
+      updatePreview(newExpr);
     }
+  };
+
+  const inputPercent = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // Add percentage to expression
+    const newExpr = inputExpression + '%';
+    setInputExpression(newExpr);
   };
 
   const openModal = () => {
@@ -469,24 +502,54 @@ export const FloatingCalculator: React.FC<FloatingCalculatorProps> = ({ position
                   ) : (
                     // Calculator
                     <View style={styles.calculatorContainer}>
-                      {/* Display */}
+                      {/* Display - Modern 3-Line Design */}
                       <View style={styles.calculatorDisplay}>
                         <LinearGradient
                           colors={['#F9FAFB', '#FFFFFF']}
                           style={styles.displayGradient}
                         >
-                          {operation && previousValue !== null && (
-                            <Text style={styles.operationText}>
-                              {previousValue} {operation}
-                            </Text>
+                          {!showResult ? (
+                            <>
+                              {/* Input Expression (what user is typing) - Horizontally Scrollable */}
+                              <ScrollView
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                style={styles.inputScrollView}
+                                contentContainerStyle={styles.inputScrollContent}
+                              >
+                                <Text style={styles.inputExpression}>
+                                  {inputExpression || '0'}
+                                </Text>
+                              </ScrollView>
+
+                              {/* Preview Result (always reserve space) */}
+                              <Text style={styles.previewResult}>
+                                {previewValue || ' '}
+                              </Text>
+                            </>
+                          ) : (
+                            <>
+                              {/* Show expression above result - Scrollable */}
+                              <ScrollView
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                style={styles.expressionScrollView}
+                              >
+                                <Text style={styles.expressionText}>
+                                  {inputExpression}
+                                </Text>
+                              </ScrollView>
+
+                              {/* Final Result (big, bold) */}
+                              <Text
+                                style={styles.finalResult}
+                                numberOfLines={1}
+                                adjustsFontSizeToFit
+                              >
+                                = {resultValue}
+                              </Text>
+                            </>
                           )}
-                          <Text
-                            style={styles.displayText}
-                            numberOfLines={1}
-                            adjustsFontSizeToFit
-                          >
-                            {display}
-                          </Text>
                         </LinearGradient>
                       </View>
 
@@ -800,9 +863,9 @@ const styles = StyleSheet.create({
   modalContent: {
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
-    width: width * 0.9,
-    maxWidth: 400,
-    height: height * 0.68,
+    width: width * 0.92,
+    maxWidth: 420,
+    height: height * 0.75,
     maxHeight: height * 0.85,
     overflow: 'hidden',
     shadowColor: '#000',
@@ -987,8 +1050,8 @@ const styles = StyleSheet.create({
 
   // Calculator Styles
   calculatorContainer: {
-    padding: Spacing.sm,
-    paddingBottom: 0,
+    padding: Spacing.md,
+    paddingBottom: Spacing.sm,
   },
   calculatorDisplay: {
     marginBottom: 8,
@@ -1001,21 +1064,55 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   displayGradient: {
-    padding: Spacing.sm,
-    paddingVertical: Spacing.md,
-    minHeight: 70,
+    padding: Spacing.lg,
+    paddingVertical: Spacing.xl,
+    height: 130, // More height for proper display
     justifyContent: 'flex-end',
   },
-  operationText: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    marginBottom: 2,
+  // ScrollView containers for horizontal scrolling
+  inputScrollView: {
+    marginBottom: 8,
+    flexShrink: 0,
   },
-  displayText: {
-    fontSize: 32,
-    fontWeight: '700',
+  inputScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'flex-end',
+    alignItems: 'flex-end',
+    paddingVertical: 8, // More padding to prevent cutting
+  },
+  expressionScrollView: {
+    maxHeight: 24,
+    marginBottom: 8,
+  },
+  // Input mode styles (before pressing =)
+  inputExpression: {
+    fontSize: 28,
+    fontWeight: '600',
     color: '#1F2937',
     textAlign: 'right',
+    includeFontPadding: false, // Android: remove extra padding
+    textAlignVertical: 'center', // Android: center vertically
+  },
+  previewResult: {
+    fontSize: 20,
+    color: '#9CA3AF',
+    textAlign: 'right',
+    fontWeight: '500',
+    minHeight: 28, // Always reserve space even when empty
+    includeFontPadding: false,
+  },
+  // Result mode styles (after pressing =)
+  expressionText: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'right',
+  },
+  finalResult: {
+    fontSize: 34,
+    fontWeight: '700',
+    color: '#3B82F6',
+    textAlign: 'right',
+    minHeight: 42,
   },
   buttonGrid: {
     gap: 6,

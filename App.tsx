@@ -163,7 +163,31 @@ function AuthNavigator() {
 
         if (errorCode) {
           console.error('❌ OAuth error:', errorCode, errorDescription);
-          Alert.alert('Authentication Error', errorDescription || errorCode);
+
+          // Decode the error message to make it readable
+          const decodedMessage = errorDescription ? decodeURIComponent(errorDescription) : errorCode;
+
+          // Check if this is the "account not found" error
+          if (decodedMessage.includes('Account not found') || decodedMessage.includes('create an account')) {
+            Alert.alert(
+              '🔒 Account Not Found',
+              'Please create an account on our website before using the mobile app.',
+              [
+                {
+                  text: 'Create Account',
+                  onPress: () => Linking.openURL('https://smartcfo.webcraftio.com/register'),
+                  style: 'default'
+                },
+                {
+                  text: 'Cancel',
+                  style: 'cancel'
+                }
+              ]
+            );
+          } else {
+            // Show generic error for other errors
+            Alert.alert('Authentication Error', decodedMessage);
+          }
           return;
         }
 
@@ -183,7 +207,28 @@ function AuthNavigator() {
                 status: error.status,
                 name: error.name
               });
-              Alert.alert('Login Failed', `Could not complete login: ${error.message}`);
+
+              // Check if this is the "account not found" error
+              if (error.message.includes('Account not found') || error.message.includes('create an account')) {
+                Alert.alert(
+                  '🔒 Account Not Found',
+                  'Please create an account on our website before using the mobile app.',
+                  [
+                    {
+                      text: 'Create Account',
+                      onPress: () => Linking.openURL('https://smartcfo.webcraftio.com/register'),
+                      style: 'default'
+                    },
+                    {
+                      text: 'Cancel',
+                      style: 'cancel'
+                    }
+                  ]
+                );
+              } else {
+                // Show generic error for other errors
+                Alert.alert('Login Failed', `Could not complete login: ${error.message}`);
+              }
             } else if (data?.session) {
               console.log('✅ PKCE OAuth session established!');
               console.log('👤 User email:', data.user?.email);

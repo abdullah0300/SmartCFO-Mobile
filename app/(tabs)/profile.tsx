@@ -26,6 +26,7 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { useBiometric } from '../../src/hooks/useBiometric';
 import { getProfile, updateProfile } from '../../src/services/api';
 import { Colors, Spacing, Typography, BorderRadius } from '../../src/constants/Colors';
+import { FloatingCalculator } from '../../src/components/common/FloatingCalculator';
 import { supabase } from '../../src/services/supabase';
 
 interface ProfileData {
@@ -440,6 +441,9 @@ export default function ProfileScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Floating Calculator */}
+      <FloatingCalculator position="right" />
     </SafeAreaView>
   );
 }

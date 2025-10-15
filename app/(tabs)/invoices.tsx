@@ -29,6 +29,7 @@ import { getInvoices } from '../../src/services/api';
 import { Colors, Spacing, Typography, BorderRadius } from '../../src/constants/Colors';
 import { Invoice } from '../../src/types';
 import { DateFilterBar } from '../../src/components/common/DateFilterBar';
+import { FloatingCalculator } from '../../src/components/common/FloatingCalculator';
 
 
 
@@ -713,6 +714,9 @@ export default function InvoicesScreen() {
           }}
         />
       )}
+
+      {/* Floating Calculator */}
+      <FloatingCalculator position="right" />
     </SafeAreaView>
   );
 }

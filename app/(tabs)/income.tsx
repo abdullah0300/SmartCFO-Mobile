@@ -28,6 +28,7 @@ import { AddIncomeModal } from '../../src/components/income/AddIncomeModal';
 import { EditIncomeModal } from '../../src/components/income/EditIncomeModal';
 import { IncomeDetailModal } from '../../src/components/income/IncomeDetailModal';
 import { DateFilterBar } from '../../src/components/common/DateFilterBar';
+import { FloatingCalculator } from '../../src/components/common/FloatingCalculator';
 import { Income } from '../../src/types';
 
 // Income Item Component
@@ -487,6 +488,9 @@ export default function IncomeScreen() {
           }}
         />
       )}
+
+      {/* Floating Calculator */}
+      <FloatingCalculator position="right" />
     </SafeAreaView>
   );
 }

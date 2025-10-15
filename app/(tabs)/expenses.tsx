@@ -28,6 +28,7 @@ import { AddExpenseModal } from '../../src/components/expense/AddExpenseModal';
 import { EditExpenseModal } from '../../src/components/expense/EditExpenseModal';
 import { ExpenseDetailModal } from '../../src/components/expense/ExpenseDetailModal';
 import { DateFilterBar } from '../../src/components/common/DateFilterBar';
+import { FloatingCalculator } from '../../src/components/common/FloatingCalculator';
 import { Expense, Vendor } from '../../src/types';
 
 const ExpenseItem = ({ 
@@ -500,6 +501,9 @@ export default function ExpensesScreen() {
           }}
         />
       )}
+
+      {/* Floating Calculator */}
+      <FloatingCalculator position="right" />
     </SafeAreaView>
   );
 }

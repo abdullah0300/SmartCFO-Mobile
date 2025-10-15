@@ -33,6 +33,7 @@ import { AIInsightsModal } from '../../src/components/dashboard/AIInsightsModal'
 import { CompositeNavigationProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { DateFilterBar } from '../../src/components/common/DateFilterBar';
+import { FloatingCalculator } from '../../src/components/common/FloatingCalculator';
 import { supabase } from '../../src/services/supabase';
 const { width } = Dimensions.get('window');
 
@@ -877,6 +878,9 @@ const handleOpenInsights = async () => {
           }}
         />
       )}
+
+      {/* Floating Calculator */}
+      <FloatingCalculator position="right" />
         </SafeAreaView>
       );
     }

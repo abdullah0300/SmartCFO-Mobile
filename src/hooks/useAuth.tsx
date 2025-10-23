@@ -139,6 +139,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         options: {
           redirectTo: 'smartcfo://', // Deep link scheme for mobile
           skipBrowserRedirect: true, // We handle the redirect manually
+          data: {
+            platform: 'mobile', // Identify as mobile app for auth hooks
+          },
         },
       });
 
